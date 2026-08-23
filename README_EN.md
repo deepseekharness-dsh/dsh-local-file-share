@@ -69,8 +69,9 @@ line mounts the host half; its config carries `wsPath` and `requestTimeoutMs`).
    permission required);
 3. The card's 目录内容 (contents) section browses the authorized directory directly: a
    lazy-loaded tree (click a directory row to expand/collapse, 200 entries per level with
-   a "…N more" overflow line); file rows show sizes and a 复制路径 (copy path) button that
-   copies the relative path — handy for pasting to the AI;
+   a "…N more" overflow line), plus a search box that recursively matches file/directory
+   paths; file rows show sizes and a 复制路径 (copy path) button that copies the relative
+   path — handy for pasting to the AI;
 4. The agent can then use the three tools:
    - `browser_fs_list { path?, recursive? }` — list a directory (relative path/kind/size, optional recursion)
    - `browser_fs_read { path, maxBytes? }` — read a text file (256 KiB cap by default, truncation marked)
@@ -85,10 +86,11 @@ fall back to `<html lang>`/browser language).
 
 ## Preview & refresh
 
-Click a **file name** in the contents tree to pop the preview window (mask + fixed-size
-window, min(720px,92vw) × min(70vh,560px), not content-sized; pinned title bar — file name
-+ size/truncation note + ✕, with the relative path below; content area scrolls
-independently; ✕ / mask click / ESC to close):
+Click a **file name** in the contents tree to pop the preview window (mask + default-size
+window, min(720px,92vw) × min(70vh,560px); drag the title bar to move it, drag the
+bottom-right corner to resize; pinned title bar — file name + size/truncation note + ✕,
+with the relative path below; content area scrolls independently; ✕ / mask click / ESC to
+close):
 
 - **Images** (png/jpg/jpeg/gif/webp/svg/ico/bmp): read as arrayBuffer into a blob URL shown
   with `<img>` (revokeObjectURL on close); images over 8MB are not fetched — a too-big
@@ -100,6 +102,15 @@ independently; ✕ / mask click / ESC to close):
 Preview takes the same path in both modes (the full/compat backends each implement
 `readBlob`), so it works in read-only compat mode too.
 
+Text/code preview supports **editing** (full mode only, i.e. when the backend is writable):
+click **Edit** to load the complete file into a textarea; saving goes through the same
+backend write path as the agent tool `browser_fs_write` (`FsBackend.write`), then the
+preview refreshes automatically. Large files are still shown as the first 64KB only, and the
+editor clearly notes that the full file has been loaded and saving overwrites the whole
+file. Compat mode stays read-only and does not show the edit entry. While editing, ESC first
+exits editing; a second ESC closes the window. The editor shows line numbers and uses the
+same syntax highlighting described below.
+
 Text preview comes with **syntax highlighting**: the extension maps to a language
 (js/ts/tsx/py/go/rs/java/c/cpp/h/sh/yaml/json/toml/md/html/css/xml/sql, etc.; unmapped
 extensions stay plain text), and only the truncated first 64KB is highlighted. Highlighting
@@ -110,10 +121,11 @@ language (plain text with a "语法着色加载中…" note while loading, silen
 text on failure).
 
 **The card is draggable**: the title row is the drag handle (mouse and touch; movement
-beyond 4px counts as a drag, so collapse/button clicks are never eaten); while dragging,
-the panel/ball tracks the pointer directly, with clamping applied only on release and
-window resize. The ball always stays fully inside the viewport (flush to edges, no hidden
-margins). An expanded panel that has never been dragged derives its initial position from
+beyond 4px counts as a drag, so collapse/button clicks are never eaten); a bottom handle
+lets you drag vertically to resize the card height (minimum 160px, persisted under
+localStorage key `dsh-browser-fs:card-height`); while dragging, the panel/ball tracks the
+pointer directly, with clamping applied only on release and window resize. The ball always
+stays fully inside the viewport (flush to edges, no hidden margins). An expanded panel that has never been dragged derives its initial position from
 the ball (flipping leftward/upward when the ball sits in the right/bottom half, then
 clamping into a 10px margin with width/height capped to the viewport); once dragged it
 **stays where it was dropped** (viewport clamp only, never flipped), and the position is

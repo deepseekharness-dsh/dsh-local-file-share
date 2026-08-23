@@ -200,6 +200,13 @@ interface TreeNode {
   size?: number
 }
 
+/** 搜索结果的扁平条目（来自 backend.list 的递归扫描）。 */
+interface SearchEntry {
+  path: string
+  kind: 'file' | 'directory'
+  size?: number
+}
+
 interface LevelData {
   entries: TreeNode[]
   total: number
@@ -257,8 +264,13 @@ const previewMaskStyle: CSSProperties = {
   justifyContent: 'center',
 }
 
+/** 预览窗可拖动/缩放时的最小尺寸。 */
+const MIN_PREVIEW_WIDTH = 320
+const MIN_PREVIEW_HEIGHT = 200
+
 const previewCardStyle: CSSProperties = {
-  // 窗口形态：固定尺寸不随内容伸缩；flex 列布局，标题栏钉顶、内容区独立滚动。
+  // 窗口形态：默认尺寸不随内容伸缩；flex 列布局，标题栏钉顶、内容区独立滚动。
+  // 实际 left/top/width/height 由组件内 win state 控制，这里只保留基础样式。
   width: 'min(720px, 92vw)',
   height: 'min(70vh, 560px)',
   display: 'flex',
@@ -282,6 +294,10 @@ const previewCardStyle: CSSProperties = {
  * 按文本只取前 64KB UTF-8 解码，等宽 <pre> 展示；解码后含 NUL 视为二进制。
  * 文本经 langFor 映射到语言时再做语法着色（高亮 chunk 按需加载，loading 态
  * 先出纯文本，失败退回纯文本）。
+ * 文本/代码预览支持编辑（仅完整模式后端可写）：点「编辑」会载入完整文件内容
+ * 到 textarea（左侧行号 + 透明 textarea 叠加高亮 <pre>，随输入同步重算语法着色），
+ * 保存走 FsBackend.write（兼容模式只读，不显示编辑入口）；保存后重新拉取预览。
+ * 编辑态下 ESC 先退出编辑，再按一次才关闭窗口。
  * ✕ / 点遮罩 / ESC 关闭，关闭（卸载）时 revokeObjectURL。
  * @param props.backend - 当前文件后端（两模式同路径，readBlob 各自实现）。
  * @param props.path - 相对授权根的文件路径。
@@ -289,6 +305,42 @@ const previewCardStyle: CSSProperties = {
  */
 function FilePreview({ backend, path, onClose, s }: { backend: FsBackend; path: string; onClose(): void; s: Strings }): ReactElement {
   const [result, setResult] = useState<PreviewResult>({ status: 'loading' })
+  const [reloadToken, setReloadToken] = useState(0)
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [editLoading, setEditLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+  /** 组件卸载后不再触发 setState（异步读全文/保存可能跨关闭）。 */
+  const aliveRef = useRef(true)
+  /** 编辑态语法高亮：透明 textarea 叠加高亮 <pre>，需要同步滚动。 */
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const highlightPreRef = useRef<HTMLPreElement | null>(null)
+  const gutterRef = useRef<HTMLDivElement | null>(null)
+  const [editHtml, setEditHtml] = useState<string | null>(null)
+  const [editHighlightFailed, setEditHighlightFailed] = useState(false)
+  /** 预览窗位置/尺寸（初始居中，之后由拖拽/缩放更新）。 */
+  const [win, setWin] = useState(() => {
+    const width = Math.min(720, Math.max(MIN_PREVIEW_WIDTH, window.innerWidth * 0.92), window.innerWidth)
+    const height = Math.min(560, Math.max(MIN_PREVIEW_HEIGHT, window.innerHeight * 0.7), window.innerHeight)
+    return {
+      left: Math.max(0, Math.floor((window.innerWidth - width) / 2)),
+      top: Math.max(0, Math.floor((window.innerHeight - height) / 2)),
+      width,
+      height,
+    }
+  })
+  /** 预览窗拖拽/缩放手势状态。 */
+  const previewDragRef = useRef<{
+    type: 'move' | 'resize'
+    startX: number
+    startY: number
+    startLeft: number
+    startTop: number
+    startWidth: number
+    startHeight: number
+  } | null>(null)
+  const previewDragCleanupRef = useRef<(() => void) | null>(null)
   const name = path.split('/').pop() ?? path
 
   useEffect(() => {
@@ -339,15 +391,189 @@ function FilePreview({ backend, path, onClose, s }: { backend: FsBackend; path: 
       cancelled = true
       if (objectUrl !== null) URL.revokeObjectURL(objectUrl)
     }
-  }, [backend, path])
+  }, [backend, path, reloadToken])
+
+  useEffect(() => () => {
+    aliveRef.current = false
+    previewDragCleanupRef.current?.()
+  }, [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') {
+        if (editing) {
+          setEditing(false)
+          setEditError(null)
+        } else {
+          onClose()
+        }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => { window.removeEventListener('keydown', onKey) }
-  }, [onClose])
+  }, [onClose, editing])
+
+  /** 文本/代码结果且后端可写时，显示编辑入口。 */
+  const canEdit = (result.status === 'text' || result.status === 'code') && !backend.readOnly
+
+  /** 进入编辑：重新读完整文件（预览只展示前 64KB，编辑必须载入全文）。 */
+  const startEdit = async (): Promise<void> => {
+    setEditing(true)
+    setEditLoading(true)
+    setEditError(null)
+    try {
+      const blob = await backend.readBlob(path)
+      const fullText = await blob.text()
+      if (!aliveRef.current) return
+      if (looksBinary(fullText)) {
+        setEditError(s.binary(humanSize(blob.size)))
+        return
+      }
+      setDraft(fullText)
+    } catch (error) {
+      if (aliveRef.current) {
+        setEditError(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      if (aliveRef.current) setEditLoading(false)
+    }
+  }
+
+  /** 保存：用 textarea 全文覆盖目标文件，成功后重新拉取预览。 */
+  const save = async (): Promise<void> => {
+    if (backend.readOnly || saving || editLoading) return
+    setSaving(true)
+    setEditError(null)
+    try {
+      await backend.write({ path, content: draft }, new AbortController().signal)
+      if (!aliveRef.current) return
+      setEditing(false)
+      setDraft('')
+      setEditError(null)
+      setResult({ status: 'loading' })
+      setReloadToken(token => token + 1)
+    } catch (error) {
+      if (aliveRef.current) {
+        setEditError(error instanceof Error ? error.message : String(error))
+      }
+    } finally {
+      if (aliveRef.current) setSaving(false)
+    }
+  }
+
+  /** 编辑态语法高亮：仅在已映射语言且全文载入后，随 draft 变化重算。 */
+  useEffect(() => {
+    if (!editing || editLoading || editError !== null) {
+      setEditHtml(null)
+      setEditHighlightFailed(false)
+      return
+    }
+    const lang = langFor(path)
+    if (lang === null) {
+      setEditHtml(null)
+      setEditHighlightFailed(false)
+      return
+    }
+    let cancelled = false
+    setEditHighlightFailed(false)
+    // 轻量防抖：连续输入时不每次立刻重算整文件高亮。
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const mod = await loadHighlighter()
+          if (cancelled) return
+          setEditHtml(mod.highlightCode(draft, lang))
+        } catch {
+          if (!cancelled) setEditHighlightFailed(true)
+        }
+      })()
+    }, 120)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [editing, editLoading, editError, path, draft])
+
+  /** 编辑态行号：按当前 draft 计算，空文件也保留第 1 行。 */
+  const lineCount = Math.max(1, draft.split('\n').length)
+  const lineNumbers = Array.from({ length: lineCount }, (_, index) => String(index + 1)).join('\n')
+  const lineGutterWidth = `calc(${String(Math.max(2, String(lineCount).length))}ch + 16px)`
+
+  /** textarea 滚动时让背后高亮层与左侧行号同步滚动，保证文字、高亮、行号对齐。 */
+  const syncEditScroll = (): void => {
+    const textarea = textareaRef.current
+    const pre = highlightPreRef.current
+    const gutter = gutterRef.current
+    if (textarea === null) return
+    if (pre !== null) {
+      pre.scrollTop = textarea.scrollTop
+      pre.scrollLeft = textarea.scrollLeft
+    }
+    if (gutter !== null) gutter.scrollTop = textarea.scrollTop
+  }
+
+  /** 将预览窗位置限制在视口内（尺寸大于视口时允许贴左/贴上）。 */
+  const clampPreviewWin = (left: number, top: number, width: number, height: number): { left: number; top: number; width: number; height: number } => {
+    const maxLeft = Math.max(0, window.innerWidth - width)
+    const maxTop = Math.max(0, window.innerHeight - height)
+    return {
+      left: Math.min(Math.max(left, 0), maxLeft),
+      top: Math.min(Math.max(top, 0), maxTop),
+      width,
+      height,
+    }
+  }
+
+  /** 预览窗拖动/缩放：window 级监听，移动/缩放过程中持续 clamp 在视口内。 */
+  const startPreviewDrag = (event: React.PointerEvent<HTMLElement>, type: 'move' | 'resize'): void => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    if (type === 'move') {
+      const target = event.target as HTMLElement
+      if (target.closest('button') !== null) return
+    }
+    previewDragCleanupRef.current?.()
+    const drag = {
+      type,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: win.left,
+      startTop: win.top,
+      startWidth: win.width,
+      startHeight: win.height,
+    }
+    previewDragRef.current = drag
+    const onMove = (e: PointerEvent): void => {
+      if (previewDragRef.current !== drag) return
+      if (drag.type === 'move') {
+        setWin(prev => clampPreviewWin(
+          drag.startLeft + e.clientX - drag.startX,
+          drag.startTop + e.clientY - drag.startY,
+          prev.width,
+          prev.height,
+        ))
+      } else {
+        const width = Math.min(
+          Math.max(drag.startWidth + e.clientX - drag.startX, MIN_PREVIEW_WIDTH),
+          window.innerWidth - drag.startLeft,
+        )
+        const height = Math.min(
+          Math.max(drag.startHeight + e.clientY - drag.startY, MIN_PREVIEW_HEIGHT),
+          window.innerHeight - drag.startTop,
+        )
+        setWin(prev => ({ ...prev, width, height }))
+      }
+    }
+    const finish = (): void => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+      window.removeEventListener('blur', finish)
+      previewDragCleanupRef.current = null
+      previewDragRef.current = null
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
+    window.addEventListener('blur', finish)
+    previewDragCleanupRef.current = finish
+  }
 
   /** 标题栏中部标注：大小 + 截断（加载中/错误无标注）。 */
   const meta = ((): string => {
@@ -362,18 +588,61 @@ function FilePreview({ backend, path, onClose, s }: { backend: FsBackend; path: 
   })()
 
   // 预览窗同样 portal 到 body（与卡片同一层级策略，z-200 压过卡片 z-100）。
+  const appliedPreviewCardStyle: CSSProperties = {
+    ...previewCardStyle,
+    position: 'absolute',
+    left: `${String(win.left)}px`,
+    top: `${String(win.top)}px`,
+    width: `${String(win.width)}px`,
+    height: `${String(win.height)}px`,
+  }
   return createPortal(
     <div style={previewMaskStyle} onClick={onClose}>
-      <div style={previewCardStyle} onClick={(event) => { event.stopPropagation() }}>
+      <div style={appliedPreviewCardStyle} onClick={(event) => { event.stopPropagation() }}>
         {/* 固定标题栏：文件名（左，过长截断）+ 大小/截断标注（中）+ ✕（右钉住），不随内容滚动。 */}
         <div style={{
           flexShrink: 0, padding: '8px 12px',
           borderBottom: '1px solid rgba(255, 255, 255, 0.12)',
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'move', touchAction: 'none', userSelect: 'none' }}
+            title={s.moveTip}
+            onPointerDown={(event) => { startPreviewDrag(event, 'move') }}
+          >
             <strong style={{ ...rowTextStyle, flex: 1, minWidth: 0 }} title={path}>📄 {name}</strong>
             {meta !== '' && (
               <span style={{ opacity: 0.6, fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0 }}>{meta}</span>
+            )}
+            {editing ? (
+              <>
+                <button
+                  style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2, flexShrink: 0 }}
+                  onClick={() => { void save() }}
+                  disabled={saving || editLoading || editError !== null}
+                  title={s.save}
+                >
+                  {saving ? s.saving : s.save}
+                </button>
+                <button
+                  style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2, flexShrink: 0 }}
+                  onClick={() => {
+                    setEditing(false)
+                    setEditError(null)
+                  }}
+                  disabled={saving}
+                  title={s.cancel}
+                >
+                  {s.cancel}
+                </button>
+              </>
+            ) : canEdit && (
+              <button
+                style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2, flexShrink: 0 }}
+                onClick={() => { void startEdit() }}
+                title={s.edit}
+              >
+                ✏️ {s.edit}
+              </button>
             )}
             <button
               style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2, flexShrink: 0 }}
@@ -389,42 +658,135 @@ function FilePreview({ backend, path, onClose, s }: { backend: FsBackend; path: 
         </div>
         {/* 内容区独立滚动（minHeight:0 让 flex 子项可收缩出滚动条）。 */}
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 12px' }}>
-          {result.status === 'loading' && <span style={{ opacity: 0.6 }}>{s.loading}</span>}
-          {result.status === 'error' && <span style={{ color: '#f28b82' }}>{result.message}</span>}
-          {result.status === 'too-big' && (
-            <span style={{ opacity: 0.85 }}>{s.tooBig(humanSize(result.size))}</span>
-          )}
-          {result.status === 'binary' && (
-            <span style={{ opacity: 0.85 }}>{s.binary(humanSize(result.size))}</span>
-          )}
-          {result.status === 'image' && (
-            <img src={result.url} alt={name} style={{ maxWidth: '100%', borderRadius: '6px' }} />
-          )}
-          {result.status === 'text' && (
-            <>
-              {result.highlighting === true && (
-                <div style={{ opacity: 0.6, marginBottom: '4px' }}>{s.hlLoading}</div>
+          {editing ? (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: '8px' }}>
+              {editLoading ? (
+                <span style={{ opacity: 0.6 }}>{s.loading}</span>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%' }}>
+                    <div
+                      ref={gutterRef}
+                      aria-hidden="true"
+                      style={{
+                        flexShrink: 0, overflow: 'hidden', boxSizing: 'border-box',
+                        minWidth: lineGutterWidth,
+                        padding: '9px 8px 9px 8px',
+                        background: 'rgba(0,0,0,0.25)',
+                        textAlign: 'right', color: 'rgba(255,255,255,0.35)',
+                        fontFamily: 'monospace', fontSize: '11px', lineHeight: 1.5,
+                        userSelect: 'none',
+                      }}
+                    >
+                      <pre style={{ margin: 0, fontFamily: 'inherit', fontSize: 'inherit', lineHeight: 'inherit', whiteSpace: 'pre', textAlign: 'right' }}>
+                        {lineNumbers}
+                      </pre>
+                    </div>
+                    <div style={{ position: 'relative', flex: 1, minHeight: 0, minWidth: 0 }}>
+                      <pre
+                        ref={highlightPreRef}
+                        aria-hidden="true"
+                        className="hljs"
+                        style={{
+                          position: 'absolute', inset: 0, margin: 0,
+                          boxSizing: 'border-box', padding: '8px',
+                          border: '1px solid rgba(255,255,255,0.25)', borderRadius: '6px',
+                          background: 'rgba(0,0,0,0.25)', color: '#e8eaed',
+                          fontFamily: 'monospace', fontSize: '11px', lineHeight: 1.5,
+                          whiteSpace: 'pre', overflow: 'hidden', pointerEvents: 'none',
+                          tabSize: 2,
+                        }}
+                      >
+                        {editHtml !== null && !editHighlightFailed
+                          ? <code style={{ fontFamily: 'inherit' }} dangerouslySetInnerHTML={{ __html: editHtml }} />
+                          : draft}
+                      </pre>
+                      <textarea
+                        ref={textareaRef}
+                        value={draft}
+                        onChange={(event) => { setDraft(event.target.value) }}
+                        onScroll={syncEditScroll}
+                        disabled={saving}
+                        wrap="off"
+                        spellCheck={false}
+                        style={{
+                          position: 'absolute', inset: 0,
+                          width: '100%', height: '100%', boxSizing: 'border-box',
+                          resize: 'none', background: 'transparent',
+                          border: '1px solid rgba(255,255,255,0.25)', borderRadius: '6px',
+                          color: 'transparent', caretColor: '#e8eaed',
+                          fontFamily: 'monospace', fontSize: '11px', lineHeight: 1.5,
+                          padding: '8px', whiteSpace: 'pre', overflow: 'auto',
+                          outline: 'none', zIndex: 1, tabSize: 2,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {(result.status === 'text' || result.status === 'code') && result.truncated && (
+                    <div style={{ opacity: 0.6, fontSize: '11px' }}>{s.editFullFile}</div>
+                  )}
+                </>
               )}
-              <pre style={{
-                margin: 0, fontFamily: 'monospace', fontSize: '11px',
-                whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-              }}>
-                {result.text}
-              </pre>
+              {editError !== null && <span style={{ color: '#f28b82' }}>{editError}</span>}
+            </div>
+          ) : (
+            <>
+              {result.status === 'loading' && <span style={{ opacity: 0.6 }}>{s.loading}</span>}
+              {result.status === 'error' && <span style={{ color: '#f28b82' }}>{result.message}</span>}
+              {result.status === 'too-big' && (
+                <span style={{ opacity: 0.85 }}>{s.tooBig(humanSize(result.size))}</span>
+              )}
+              {result.status === 'binary' && (
+                <span style={{ opacity: 0.85 }}>{s.binary(humanSize(result.size))}</span>
+              )}
+              {result.status === 'image' && (
+                <img src={result.url} alt={name} style={{ maxWidth: '100%', borderRadius: '6px' }} />
+              )}
+              {result.status === 'text' && (
+                <>
+                  {result.highlighting === true && (
+                    <div style={{ opacity: 0.6, marginBottom: '4px' }}>{s.hlLoading}</div>
+                  )}
+                  <pre style={{
+                    margin: 0, fontFamily: 'monospace', fontSize: '11px',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                  }}>
+                    {result.text}
+                  </pre>
+                </>
+              )}
+              {result.status === 'code' && (
+                // hljs 输出已转义（& < >），可安全注入。
+                <pre
+                  className="hljs"
+                  style={{
+                    margin: 0, fontFamily: 'monospace', fontSize: '11px',
+                    whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+                  }}
+                >
+                  <code dangerouslySetInnerHTML={{ __html: result.html }} />
+                </pre>
+              )}
             </>
           )}
-          {result.status === 'code' && (
-            // hljs 输出已转义（& < >），可安全注入。
-            <pre
-              className="hljs"
-              style={{
-                margin: 0, fontFamily: 'monospace', fontSize: '11px',
-                whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-              }}
-            >
-              <code dangerouslySetInnerHTML={{ __html: result.html }} />
-            </pre>
-          )}
+        </div>
+        {/* 右下角缩放手柄。 */}
+        <div
+          style={{
+            position: 'absolute', right: '2px', bottom: '2px',
+            width: '18px', height: '18px', cursor: 'nwse-resize',
+            touchAction: 'none', userSelect: 'none', zIndex: 2,
+            display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end',
+            padding: '3px', color: 'rgba(255,255,255,0.45)',
+          }}
+          title={s.resizeTip}
+          onPointerDown={(event) => { startPreviewDrag(event, 'resize') }}
+        >
+          <span style={{
+            width: '8px', height: '8px',
+            borderRight: '2px solid currentColor',
+            borderBottom: '2px solid currentColor',
+          }} />
         </div>
       </div>
     </div>,
@@ -455,6 +817,14 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
   const [copied, setCopied] = useState<string | null>(null)
   /** 预览中的文件相对路径（null 为无预览层）。 */
   const [preview, setPreview] = useState<string | null>(null)
+  /** 目录搜索：输入、结果、状态。 */
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<SearchEntry[]>([])
+  const [searching, setSearching] = useState(false)
+  const [searchTruncated, setSearchTruncated] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const searchAbortRef = useRef<AbortController | null>(null)
 
   /** 清全部层级/展开缓存并重拉根级（树区收起时只清缓存，下次展开再拉）。 */
   const refresh = (): void => {
@@ -462,6 +832,13 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
     setLevels(new Map())
     setErrors(new Map())
     setCopied(null)
+    if (searchTimerRef.current !== undefined) clearTimeout(searchTimerRef.current)
+    searchAbortRef.current?.abort()
+    setSearchQuery('')
+    setSearchResults([])
+    setSearchTruncated(false)
+    setSearchError(null)
+    setSearching(false)
     if (open) void loadLevel('')
   }
 
@@ -470,6 +847,12 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
     apiRef.current = { refresh }
     return () => { apiRef.current = null }
   })
+
+  // 卸载时取消未完成的搜索。
+  useEffect(() => () => {
+    if (searchTimerRef.current !== undefined) clearTimeout(searchTimerRef.current)
+    searchAbortRef.current?.abort()
+  }, [])
 
   const loadLevel = async (dirPath: string): Promise<void> => {
     setLoading(prev => new Set(prev).add(dirPath))
@@ -494,6 +877,65 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
         return next
       })
     }
+  }
+
+  /** 目录搜索：防抖 200ms，递归列出根目录后按路径过滤；可取消上一次请求。 */
+  useEffect(() => {
+    const query = searchQuery.trim()
+    if (searchTimerRef.current !== undefined) clearTimeout(searchTimerRef.current)
+    searchAbortRef.current?.abort()
+    if (query === '') {
+      setSearchResults([])
+      setSearchTruncated(false)
+      setSearchError(null)
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    searchTimerRef.current = setTimeout(() => {
+      const controller = new AbortController()
+      searchAbortRef.current = controller
+      void backend.list({ path: '', recursive: true }, controller.signal)
+        .then((result) => {
+          if (controller.signal.aborted) return
+          const lower = query.toLowerCase()
+          const matches = result.entries.filter(entry => entry.path.toLowerCase().includes(lower))
+          setSearchResults(matches)
+          setSearchTruncated(result.truncated)
+          setSearchError(null)
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return
+          setSearchError(error instanceof Error ? error.message : String(error))
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setSearching(false)
+        })
+    }, 200)
+  }, [searchQuery, backend])
+
+  /** 从搜索结果点目录：逐级加载祖先层级并展开，回到普通树视图。 */
+  const revealDirectory = (path: string): void => {
+    void (async () => {
+      const parts = path.split('/')
+      const dirsToExpand: string[] = []
+      try {
+        let current = ''
+        for (const part of parts) {
+          current = current === '' ? part : `${current}/${part}`
+          dirsToExpand.push(current)
+          await loadLevel(current)
+        }
+        setExpanded(prev => new Set([...prev, ...dirsToExpand]))
+        setSearchQuery('')
+        setSearchResults([])
+        setSearchTruncated(false)
+        setSearchError(null)
+        setOpen(true)
+      } catch {
+        // 展开失败时保留搜索结果，用户仍可复制/预览。
+      }
+    })()
   }
 
   const toggleSection = (): void => {
@@ -606,11 +1048,61 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
         {open ? '▾' : '▸'} {s.treeSection}
       </div>
       {open && (
-        <div style={{ maxHeight: '240px', overflowY: 'auto', marginTop: '4px' }}>
-          {loading.has('') && !levels.has('') && <div style={{ opacity: 0.6 }}>{s.loading}</div>}
-          {errors.has('') && <div style={{ color: '#f28b82' }}>{errors.get('')}</div>}
-          {renderLevel('', 0)}
-        </div>
+        <>
+          <input
+            value={searchQuery}
+            onChange={(event) => { setSearchQuery(event.target.value) }}
+            placeholder={s.searchPlaceholder}
+            style={{
+              width: '100%', boxSizing: 'border-box', marginTop: '4px',
+              background: 'rgba(255,255,255,0.08)',
+              border: '1px solid rgba(255,255,255,0.25)', borderRadius: '6px',
+              color: 'inherit', fontSize: '12px', padding: '2px 6px',
+            }}
+          />
+          {searchQuery.trim() !== '' ? (
+            <div style={{ maxHeight: '160px', overflowY: 'auto', marginTop: '4px' }}>
+              {searching && <div style={{ opacity: 0.6 }}>{s.loading}</div>}
+              {searchError !== null && <div style={{ color: '#f28b82' }}>{searchError}</div>}
+              {!searching && searchError === null && searchResults.length === 0 && (
+                <div style={{ opacity: 0.6 }}>{s.searchEmpty}</div>
+              )}
+              {searchResults.map(entry => (
+                <div key={entry.path} style={{ display: 'flex', alignItems: 'center', gap: '4px', paddingTop: '1px', paddingBottom: '1px' }}>
+                  {entry.kind === 'directory'
+                    ? (
+                      <span
+                        style={{ ...rowTextStyle, flex: 1, cursor: 'pointer' }}
+                        title={s.searchOpenDirTip(entry.path)}
+                        onClick={() => { revealDirectory(entry.path) }}
+                      >
+                        📁 {entry.path}
+                      </span>
+                    )
+                    : (
+                      <span
+                        style={{ ...rowTextStyle, flex: 1, cursor: 'pointer', color: '#8ab4f8' }}
+                        title={s.previewTip(entry.path)}
+                        onClick={() => { setPreview(entry.path) }}
+                      >
+                        📄 {entry.path}
+                        {entry.size !== undefined && <span style={{ opacity: 0.55 }}> {humanSize(entry.size)}</span>}
+                      </span>
+                    )}
+                </div>
+              ))}
+              {searchTruncated && !searching && (
+                <div style={{ opacity: 0.6, marginTop: '2px' }}>{s.searchTruncated}</div>
+              )}
+            </div>
+          ) : (
+            <div style={{ maxHeight: '240px', overflowY: 'auto', marginTop: '4px' }}>
+              {loading.has('') && !levels.has('') && <div style={{ opacity: 0.6 }}>{s.loading}</div>}
+              {errors.has('') && <div style={{ color: '#f28b82' }}>{errors.get('')}</div>}
+              {renderLevel('', 0)}
+            </div>
+          )}
+        </>
       )}
       {preview !== null && (
         <FilePreview backend={backend} path={preview} onClose={() => { setPreview(null) }} s={s} />
@@ -629,6 +1121,29 @@ interface CardPos {
 
 /** 卡片位置的 localStorage key（与 device-name/collapsed 同前缀约定）。 */
 const CARD_POS_KEY = 'dsh-browser-fs:card-pos'
+
+/** 卡片高度记忆 key 与最小高度。 */
+const CARD_HEIGHT_KEY = 'dsh-browser-fs:card-height'
+const MIN_CARD_HEIGHT = 160
+
+function readStoredCardHeight(): number | null {
+  try {
+    const raw = localStorage.getItem(CARD_HEIGHT_KEY)
+    if (raw === null) return null
+    const value = Number(raw)
+    return Number.isFinite(value) && value > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+function writeStoredCardHeight(height: number): void {
+  try {
+    localStorage.setItem(CARD_HEIGHT_KEY, String(height))
+  } catch {
+    // localStorage 不可用：高度只在本次页面存活。
+  }
+}
 
 /** 位移超过该像素才算拖拽；低于此按点击处理（不吃折叠/昵称/授权按钮的点击）。 */
 const DRAG_THRESHOLD_PX = 4
@@ -734,6 +1249,15 @@ export function createCard(source: CardSource): () => ReactElement {
      * 不清空——面板位置跨收起/展开保持（卡片拖到哪就停在哪）。
      */
     const [panelFit, setPanelFit] = useState<CardPos | null>(initialStored?.panel ?? null)
+    /** 用户手动调整过的卡片高度（null = 跟随内容自动高度）。 */
+    const [cardHeight, setCardHeight] = useState<number | null>(readStoredCardHeight)
+    const cardResizeRef = useRef<{
+      startY: number
+      startHeight: number
+      startTop: number
+      lastHeight: number
+    } | null>(null)
+    const cardResizeCleanupRef = useRef<(() => void) | null>(null)
 
     // 恢复的位置可能已出视口（窗口此后变小过）：挂载后 clamp 一次；窗口
     // resize 时同样 clamp（锚点按球规则，面板按自身尺寸只 clamp 不翻转）。
@@ -756,7 +1280,10 @@ export function createCard(source: CardSource): () => ReactElement {
     }, [])
 
     // 卸载兜底：手势途中组件卸载时摘掉 window 监听。
-    useEffect(() => () => { dragCleanupRef.current?.() }, [])
+    useEffect(() => () => {
+      dragCleanupRef.current?.()
+      cardResizeCleanupRef.current?.()
+    }, [])
 
     // 展开面板的视口钳位：panelFit 为空（初次展开）时以球位为锚、允许翻转
     // 展开方向；非空时只 clamp（尊重用户拖放的位置）。拖拽进行中跳过（拖中
@@ -877,6 +1404,47 @@ export function createCard(source: CardSource): () => ReactElement {
       }
     }
 
+    /**
+     * 卡片高度拖拽：从底部手柄按住上下拖动，最小 MIN_CARD_HEIGHT，最大不超出
+     * 视口底部；松手时把高度写入 localStorage。
+     */
+    const startCardResize = (event: React.PointerEvent<HTMLElement>): void => {
+      if (event.pointerType === 'mouse' && event.button !== 0) return
+      const card = cardRef.current
+      if (card === null) return
+      cardResizeCleanupRef.current?.()
+      const drag = {
+        startY: event.clientY,
+        startHeight: cardHeight ?? card.offsetHeight,
+        startTop: card.getBoundingClientRect().top,
+        lastHeight: cardHeight ?? card.offsetHeight,
+      }
+      cardResizeRef.current = drag
+      const onMove = (e: PointerEvent): void => {
+        if (cardResizeRef.current !== drag) return
+        const nextHeight = Math.min(
+          Math.max(drag.startHeight + (e.clientY - drag.startY), MIN_CARD_HEIGHT),
+          Math.max(MIN_CARD_HEIGHT, window.innerHeight - drag.startTop - 10),
+        )
+        drag.lastHeight = nextHeight
+        setCardHeight(nextHeight)
+      }
+      const finish = (): void => {
+        window.removeEventListener('pointermove', onMove)
+        window.removeEventListener('pointerup', finish)
+        window.removeEventListener('pointercancel', finish)
+        window.removeEventListener('blur', finish)
+        cardResizeCleanupRef.current = null
+        cardResizeRef.current = null
+        if (drag.lastHeight !== drag.startHeight) writeStoredCardHeight(drag.lastHeight)
+      }
+      window.addEventListener('pointermove', onMove)
+      window.addEventListener('pointerup', finish)
+      window.addEventListener('pointercancel', finish)
+      window.addEventListener('blur', finish)
+      cardResizeCleanupRef.current = finish
+    }
+
     if (state.collapsed) {
       // 圆球与卡片共用 pos 锚点：卡片拖到哪儿，收起后球就在哪儿；展开后面板
       // 回到 panelFit 记忆位（未拖过面板则以球位为锚推导，允许翻转）。
@@ -914,7 +1482,10 @@ export function createCard(source: CardSource): () => ReactElement {
         ...cardStyle,
         maxWidth: 'min(340px, calc(100vw - 20px))',
         maxHeight: 'calc(100vh - 20px)',
-        overflowY: 'auto',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        ...(cardHeight !== null ? { height: `${String(cardHeight)}px` } : {}),
       }
       const at = dragging ? pos : (panelFit ?? pos)
       if (at === null) return capped
@@ -929,6 +1500,7 @@ export function createCard(source: CardSource): () => ReactElement {
         ref={cardRef}
         style={appliedCardStyle}
       >
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         <div
           style={{
             display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px',
@@ -1073,6 +1645,19 @@ export function createCard(source: CardSource): () => ReactElement {
             </a>
           </div>
         )}
+        </div>
+        <div
+          style={{
+            flexShrink: 0, height: '10px', cursor: 'ns-resize',
+            touchAction: 'none', userSelect: 'none',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            borderTop: '1px solid rgba(255,255,255,0.12)',
+          }}
+          title={s.cardResizeTip}
+          onPointerDown={startCardResize}
+        >
+          <span style={{ width: '24px', height: '3px', borderRadius: '2px', background: 'rgba(255,255,255,0.35)' }} />
+        </div>
       </div>,
       document.body,
     )

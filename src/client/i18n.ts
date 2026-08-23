@@ -60,6 +60,7 @@ export interface Strings {
   reselectFiles: string
   refreshTipFull: string
   refreshTipCompat: string
+  cardResizeTip: string
   copyPath: string
   copyPathTip(path: string): string
   compatBadge: string
@@ -71,11 +72,22 @@ export interface Strings {
   iframeAuthLink: string
   // ---- 目录树 ----
   treeSection: string
+  searchPlaceholder: string
+  searchEmpty: string
+  searchTruncated: string
+  searchOpenDirTip(path: string): string
   loading: string
   moreItems(n: number): string
   previewTip(path: string): string
   // ---- 预览窗 ----
   closeTip: string
+  moveTip: string
+  resizeTip: string
+  edit: string
+  save: string
+  cancel: string
+  saving: string
+  editFullFile: string
   metaImage(size: string): string
   metaTruncated: string
   tooBig(size: string): string
@@ -113,6 +125,7 @@ const zh: Strings = {
   reselectFiles: '选文件',
   refreshTipFull: '刷新目录',
   refreshTipCompat: '刷新目录（重新选择）',
+  cardResizeTip: '拖拽调整卡片高度',
   copyPath: '复制路径',
   copyPathTip: path => `复制相对路径：${path}`,
   compatBadge: '兼容模式',
@@ -123,10 +136,21 @@ const zh: Strings = {
   compatHttps: '③ 改用 HTTPS 访问',
   iframeAuthLink: '↗ 在独立标签页打开本页完成授权',
   treeSection: '目录内容',
+  searchPlaceholder: '搜索目录…',
+  searchEmpty: '没有匹配项',
+  searchTruncated: '结果可能不完整（已达 1000 条上限）',
+  searchOpenDirTip: path => `展开到该目录：${path}`,
   loading: '加载中…',
   moreItems: n => `…还有 ${String(n)} 项`,
   previewTip: path => `点击预览：${path}`,
   closeTip: '关闭（Esc）',
+  moveTip: '拖拽标题栏移动窗口',
+  resizeTip: '拖拽右下角调整大小',
+  edit: '编辑',
+  save: '保存',
+  cancel: '取消',
+  saving: '保存中…',
+  editFullFile: '已载入完整文件内容，保存会覆盖整个文件',
   metaImage: size => `图片 · ${size}`,
   metaTruncated: '仅前 64KB',
   tooBig: size => `图片太大（${size}），超过 8MB 不预览`,
@@ -163,6 +187,7 @@ const en: Strings = {
   reselectFiles: 'Pick files',
   refreshTipFull: 'Refresh directory',
   refreshTipCompat: 'Refresh (re-pick)',
+  cardResizeTip: 'Drag to resize card height',
   copyPath: 'Copy path',
   copyPathTip: path => `Copy relative path: ${path}`,
   compatBadge: 'Compat mode',
@@ -173,10 +198,21 @@ const en: Strings = {
   compatHttps: '③ Switch to HTTPS',
   iframeAuthLink: '↗ Open this page in a standalone tab to authorize',
   treeSection: 'Contents',
+  searchPlaceholder: 'Search directory…',
+  searchEmpty: 'No matches',
+  searchTruncated: 'Results may be incomplete (1000-entry limit)',
+  searchOpenDirTip: path => `Reveal directory: ${path}`,
   loading: 'Loading…',
   moreItems: n => `…${String(n)} more`,
   previewTip: path => `Click to preview: ${path}`,
   closeTip: 'Close (Esc)',
+  moveTip: 'Drag the title bar to move',
+  resizeTip: 'Drag the bottom-right corner to resize',
+  edit: 'Edit',
+  save: 'Save',
+  cancel: 'Cancel',
+  saving: 'Saving…',
+  editFullFile: 'Full file loaded; saving overwrites the entire file',
   metaImage: size => `Image · ${size}`,
   metaTruncated: 'first 64KB only',
   tooBig: size => `Image too large (${size}); over 8MB, not previewed`,
