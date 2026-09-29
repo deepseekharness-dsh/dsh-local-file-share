@@ -1,12 +1,13 @@
 # 本地文件共享 · Local File Share
 
-**中文** | [English](README_EN.md)
+[中文](https://github.com/deepseekharness-dsh/dsh-local-file-share/blob/main/README.md) | [English](https://github.com/deepseekharness-dsh/dsh-local-file-share/blob/main/README.en.md) | [Gitee 镜像](https://gitee.com/deepseekharness/dsh-local-file-share)
 
 > 让 dsh 的 agent 直接读写**你电脑上**的文件 —— 不复制进容器，不落在服务器磁盘上。
 
-[![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin#tools--capabilities)
-[![npm](https://img.shields.io/npm/v/dsh-local-file-share)](https://www.npmjs.com/package/dsh-local-file-share)
-[![license: MIT](https://img.shields.io/npm/l/dsh-local-file-share)](LICENSE)
+- npm：<https://www.npmjs.com/package/dsh-local-file-share>
+- GitHub：<https://github.com/deepseekharness-dsh/dsh-local-file-share>
+- Gitee：<https://gitee.com/deepseekharness/dsh-local-file-share>
+- 精选列表：<https://github.com/awesome-dsh-plugin/awesome-dsh-plugin>
 
 **一个悬浮卡片，一座桥：** 在 dsh 页面里授权一个本地目录，agent 就能用三个模型工具
 （`local_file_list` / `local_file_read` / `local_file_write`）直接操作它 —— 文件字节经私有
@@ -76,10 +77,10 @@ dsh 通常跑在容器或远端服务器里，自带的 fs 工具只能摸到宿
 dsh plugin --profile web add dsh-local-file-share
 
 # 2) 直接从 GitHub 安装（lib/ 构建产物入库，安装零脚本）
-dsh plugin --profile web add github:OWNER/dsh-local-file-share
+dsh plugin --profile web add github:deepseekharness-dsh/dsh-local-file-share
 
 # 3) 从 Gitee 镜像安装（同一份产物）
-dsh plugin --profile web add git+https://gitee.com/OWNER/dsh-local-file-share.git
+dsh plugin --profile web add git+https://gitee.com/deepseekharness/dsh-local-file-share.git
 
 # 4) 本地开发：改代码后重装（改动需先 npm run build，产物 lib/ 已入库）
 npm install && npm run verify
@@ -160,24 +161,19 @@ npm run verify      # 上面三步串起来（prepublishOnly 也走它）
 
 ## 发布与上架
 
-**发布前必改**（本仓库使用占位符 `OWNER`）：
+维护者文档：完整清单见 [`docs/publishing.md`](https://github.com/deepseekharness-dsh/dsh-local-file-share/blob/main/docs/publishing.md)。
 
-```sh
-# 一次性替换成你自己的账号
-grep -rl "OWNER" . --exclude-dir=node_modules --exclude-dir=.git | xargs sed -i 's/OWNER/你的账号/g'
-```
-
-1. **npm**：改 `package.json` 版本号 → 提交 → 打同号 tag（如 `v0.3.0`）→ GitHub Actions
-   `.github/workflows/publish.yml` 用 `NPM_TOKEN` 自动 `npm publish --provenance`（workflow 会校验
-   tag 与版本号一致）。手动兜底：本机 `npm publish --access public`。
-2. **GitHub**：建仓库 → `git remote add origin …` → `git push -u origin main --tags`。
-3. **Gitee（镜像）**：`git remote add gitee git@gitee.com:OWNER/dsh-local-file-share.git` →
-   `git push gitee main --tags`。Gitee 只做代码镜像与国内分发，**npm 包仍发布在 npmjs**
-   （插件市场按 npm 包名安装）。
+1. **npm**：`npm run verify` → 改版本号 → 提交 → 打同号 tag（如 `v1.0.1`）→ GitHub Actions
+   `.github/workflows/publish.yml`（校验 tag 与版本号一致 + 跑测试后 `npm publish`）。
+   本机手动兜底见 `docs/publishing.md`。
+2. **GitHub**：<https://github.com/deepseekharness-dsh/dsh-local-file-share>（主仓库，
+   已带 `dsh-plugin` topic）。
+3. **Gitee**：<https://gitee.com/deepseekharness/dsh-local-file-share>（代码镜像与国内分发；
+   npm 包仍发布在 npmjs，插件市场按 npm 包名安装）。
 4. **插件市场**：dshmarket 的安装来源**只认 curated registry**
    [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) ——
-   到那个仓库提一个 PR（在对应分类下加一条 entry，写明 npm 包名与仓库地址），站点与市场会自动
-   同步（通常一天内）。**不要**往 dshmarket 主仓库提插件条目。
+   往那个仓库提一个 PR，新增 `data/plugins/deepseekharness-dsh__dsh-local-file-share.yml`
+   （内容见 `publish/awesome-dsh-plugin-投稿.yml`）。**不要**往 dshmarket 主仓库提插件条目。
 
 ## 许可与出处
 

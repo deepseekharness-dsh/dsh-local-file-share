@@ -1,6 +1,6 @@
 # AGENTS.md — dsh-local-file-share
 
-> 用户面文档看 README.md / README_EN.md；本文件写给改代码的人/agent。
+> 用户面文档看 README.md / README.en.md；本文件写给改代码的人/agent。
 > 未来规划（图片 ImageBlock、设置卡片）见 `docs/roadmap.md`。
 
 ## 是什么
@@ -32,10 +32,13 @@ npm run smoke       # scripts/smoke.mjs
 
 ## 发布
 
-推 `v*` tag 触发 GitHub Action 自动发 npm（`.github/workflows/publish.yml`，
-secret `NPM_TOKEN`）：先改 package.json 版本号并合入主干，再打同号 tag——
-workflow 会校验 tag 与版本号一致，不符直接失败。手动兜底：本机 `npm publish`
-（`publishConfig` 已钉官方源，provenance 只有 CI 路径有）。
+完整清单见 [`docs/publishing.md`](docs/publishing.md)（npm / GitHub / Gitee / awesome-dsh-plugin 收录）。
+
+要点：改 `package.json` 版本号 → `npm run verify` → `npm test` → commit（**含 `lib/`**）→ push →
+打同号 tag（`git tag v1.0.1 && git push origin main --tags`）。CI 会校验 tag 与版本号一致、
+跑 typecheck/build/test，再用 npm **Trusted Publishing（OIDC）** 发布 —— 不需要任何令牌 secret。
+首版 1.0.0 是手工发的（npm 无法为尚不存在的包名配置 trusted publisher）。
+本仓库**尚未**被 awesome-dsh-plugin 收录，收录要往那个仓库提 PR（一条 entry）。
 
 ## 目录地图（src/client/）
 
@@ -83,12 +86,6 @@ workflow 会校验 tag 与版本号一致，不符直接失败。手动兜底：
 - **句柄随刷新失效是浏览器安全模型决定的**（permission 不跨会话持久时
   需重新授权），不是 bug；跨设备看到的"某设备的授权目录"要在 UI 上标清归属。
 - i18n 跟随 dsh 的 Settings→General→Language，不要自己另搞语言开关。
-
-## 发布
-
-完整清单见 [`docs/publishing.md`](docs/publishing.md)（npm / GitHub / Gitee / awesome-dsh-plugin 收录）。
-要点：改版本号 → `npm run verify` → commit（含 `lib/`）→ push → 打同号 tag 触发 CI 发布。
-本仓库**尚未**被 awesome-dsh-plugin 收录，收录要往那个仓库提 PR（一条 entry）。
 
 ## 来历
 

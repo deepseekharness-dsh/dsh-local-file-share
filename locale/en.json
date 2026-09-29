@@ -1,4 +1,6 @@
 {
-  "title": "Local File Share",
-  "description": "Let the dsh agent work directly with files on your machine: authorize a local directory in the browser and the tools drive it over a private WebSocket relay — nothing is copied onto the dsh host."
+  "meta": {
+    "title": "Local File Share",
+    "description": "Let the dsh agent work directly with files on your machine: authorize a local directory in the browser and the tools drive it over a private WebSocket relay — nothing is copied onto the dsh host."
+  }
 }

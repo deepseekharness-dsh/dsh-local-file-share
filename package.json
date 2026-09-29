@@ -1,31 +1,34 @@
 {
   "name": "dsh-local-file-share",
-  "version": "0.3.0",
+  "version": "1.0.0",
   "description": "Local File Share / 本地文件共享 — let the dsh agent list, read and write files on the machine that runs your browser, through a private WebSocket relay and the File System Access API. Zero data copied onto the dsh host.",
   "type": "module",
   "main": "lib/index.js",
   "license": "MIT",
-  "author": "OWNER",
+  "author": "deepseekharness",
   "icon": "./icon.svg",
   "keywords": [
     "dsh",
     "dsh-plugin",
+    "deepseek",
     "deepseek-harness",
+    "cordis",
     "local-file-share",
     "file-system-access",
     "browser-files",
     "local-files",
     "websocket",
     "agent",
-    "remote-development"
+    "remote-development",
+    "plugin"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OWNER/dsh-local-file-share.git"
+    "url": "git+https://github.com/deepseekharness-dsh/dsh-local-file-share.git"
   },
-  "homepage": "https://github.com/OWNER/dsh-local-file-share#readme",
+  "homepage": "https://github.com/deepseekharness-dsh/dsh-local-file-share#readme",
   "bugs": {
-    "url": "https://github.com/OWNER/dsh-local-file-share/issues"
+    "url": "https://github.com/deepseekharness-dsh/dsh-local-file-share/issues"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org",
@@ -46,9 +49,10 @@
     "cordis.patch.yml",
     "icon.svg",
     "README.md",
-    "README_EN.md",
+    "README.en.md",
     "CHANGELOG.md",
-    "LICENSE"
+    "LICENSE",
+    "docs"
   ],
   "dsh": {
     "bundle": {
@@ -66,7 +70,8 @@
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
     "verify": "npm run build && npm run typecheck && npm run smoke",
-    "prepublishOnly": "npm run verify"
+    "prepublishOnly": "npm run verify",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "highlight.js": "^11.12.0",

@@ -1,13 +1,14 @@
 # Local File Share · 本地文件共享
 
-[中文](README.md) | **English**
+[中文](https://github.com/deepseekharness-dsh/dsh-local-file-share/blob/main/README.md) | [English](https://github.com/deepseekharness-dsh/dsh-local-file-share/blob/main/README.en.md) | [Gitee mirror](https://gitee.com/deepseekharness/dsh-local-file-share)
 
 > Let the dsh agent work directly with files on **your** machine — nothing is copied into the
 > container, nothing lands on the server's disk.
 
-[![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin#tools--capabilities)
-[![npm](https://img.shields.io/npm/v/dsh-local-file-share)](https://www.npmjs.com/package/dsh-local-file-share)
-[![license: MIT](https://img.shields.io/npm/l/dsh-local-file-share)](LICENSE)
+- npm: <https://www.npmjs.com/package/dsh-local-file-share>
+- GitHub: <https://github.com/deepseekharness-dsh/dsh-local-file-share>
+- Gitee: <https://gitee.com/deepseekharness/dsh-local-file-share>
+- Curated list: <https://github.com/awesome-dsh-plugin/awesome-dsh-plugin>
 
 **One floating card, one bridge:** authorize a local directory in the dsh page and the agent can
 drive it with three model tools — `local_file_list`, `local_file_read`, `local_file_write`.
@@ -82,10 +83,10 @@ A two-sided cordis plugin:
 dsh plugin --profile web add dsh-local-file-share
 
 # 2) straight from GitHub (lib/ artifacts are committed; still zero scripts)
-dsh plugin --profile web add github:OWNER/dsh-local-file-share
+dsh plugin --profile web add github:deepseekharness-dsh/dsh-local-file-share
 
 # 3) from the Gitee mirror (same artifacts)
-dsh plugin --profile web add git+https://gitee.com/OWNER/dsh-local-file-share.git
+dsh plugin --profile web add git+https://gitee.com/deepseekharness/dsh-local-file-share.git
 
 # 4) local development: rebuild then reinstall (lib/ is committed)
 npm install && npm run verify
@@ -174,23 +175,20 @@ npm run verify      # all three (also wired to prepublishOnly)
 
 ## Releasing and publishing
 
-**Replace the placeholder first** (this repo uses `OWNER`):
+Maintainer notes: the full checklist lives in [`docs/publishing.md`](https://github.com/deepseekharness-dsh/dsh-local-file-share/blob/main/docs/publishing.md).
 
-```sh
-grep -rl "OWNER" . --exclude-dir=node_modules --exclude-dir=.git | xargs sed -i 's/OWNER/your-account/g'
-```
-
-1. **npm**: bump `package.json`, commit, then push a matching tag (e.g. `v0.3.0`). GitHub Actions
-   (`.github/workflows/publish.yml`) publishes with `NPM_TOKEN` and `--provenance`; the workflow
-   verifies that the tag equals the package version. Manual fallback: `npm publish --access public`.
-2. **GitHub**: create the repository, `git remote add origin …`, `git push -u origin main --tags`.
-3. **Gitee (mirror)**: `git remote add gitee git@gitee.com:OWNER/dsh-local-file-share.git` then
-   `git push gitee main --tags`. Gitee is a code mirror and China-friendly distribution channel —
-   the npm package still lives on npmjs (the market installs by npm name).
+1. **npm**: `npm run verify` → bump the version → commit → push a matching tag (e.g. `v1.0.1`).
+   GitHub Actions (`.github/workflows/publish.yml`) verifies tag == version, runs the tests and
+   publishes. Local manual fallback: see `docs/publishing.md`.
+2. **GitHub**: <https://github.com/deepseekharness-dsh/dsh-local-file-share> (primary repository,
+   tagged `dsh-plugin`).
+3. **Gitee**: <https://gitee.com/deepseekharness/dsh-local-file-share> (code mirror and China-friendly
+   distribution; the npm package still lives on npmjs, and the market installs by npm name).
 4. **Plugin market**: dshmarket installs **only from the curated
    [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) registry** — open a
-   PR there adding one entry (npm package name + repository URL) and both the site and the market pick
-   it up automatically, usually within a day. Do **not** PR plugin entries against the dshmarket repo.
+   PR there adding `data/plugins/deepseekharness-dsh__dsh-local-file-share.yml`
+   (contents in `publish/awesome-dsh-plugin-投稿.yml`). Do **not** PR plugin entries against the
+   dshmarket repo.
 
 ## License and provenance
 

@@ -1,17 +1,33 @@
-name: publish
+name: Publish to npm
 
+# Publishes on a version tag through npm Trusted Publishing (OIDC): no NPM token
+# secret and no 2FA prompt in CI. Configure the trusted publisher once on
+# npmjs.com — package → Settings → Trusted Publishing → GitHub Actions — with:
+#
+#   Organization or user : deepseekharness-dsh
+#   Repository           : dsh-local-file-share
+#   Workflow filename    : publish.yml      <- must match this file exactly
+#   Environment name     : (leave empty)
+#
+# Then: bump "version" in package.json, commit, and push a matching tag
+# (`git tag v1.0.1 && git push --tags`). The guard below fails the run when the
+# tag and package.json disagree.
+#
+# The first release (1.0.0) was published manually with a bypass-2FA granular
+# token: npm cannot configure a trusted publisher for a package name that does
+# not exist yet.
 on:
   push:
-    tags:
-      - "v*"
+    tags: ['v*']
 
-permissions:
-  contents: read
-  id-token: write # npm --provenance（Sigstore OIDC）
+permissions: {}
 
 jobs:
-  npm:
+  publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # the only grant OIDC needs
     steps:
       - uses: actions/checkout@v4
 
@@ -20,18 +36,30 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
-      - name: Verify tag matches package.json version
+      - name: Check the tag matches package.json
         run: |
           tag="${GITHUB_REF_NAME#v}"
           pkg="$(node -p "require('./package.json').version")"
+          echo "tag=$tag package.json=$pkg"
           if [ "$tag" != "$pkg" ]; then
-            echo "::error::tag v$tag != package.json version $pkg"
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $pkg"
             exit 1
           fi
 
-      - run: npm ci
+      - name: Install dev dependencies
+        run: npm ci
 
-      - name: Publish to npm
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build (lib/ must match src/)
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Use an npm that speaks OIDC (>= 11.5.1)
+        run: npm install -g npm@latest
+
+      - name: Publish
+        run: npm publish --access public

@@ -3,12 +3,17 @@
 本文件记录 `dsh-local-file-share`（本地文件共享）的全部变更。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [0.3.0] — 2026-09-29
+## [1.0.0] — 2026-09-29
 
-首个以 **Local File Share / 本地文件共享** 名义发布的版本（上游 `dsh-browser-fs@0.2.0` 的衍生版）。
+首个公开发布版（**Local File Share / 本地文件共享**，上游 `dsh-browser-fs@0.2.0` 的衍生版）：
+发布到 npm `dsh-local-file-share`，代码公开于 GitHub `deepseekharness-dsh/dsh-local-file-share`
+与 Gitee `deepseekharness/dsh-local-file-share`。
 
 ### Added
 
+- **发布工程**：`test/*.test.mjs`（node:test，覆盖 manifest / patch / 产物品牌 / locale /
+  smoke 全链路）、`.github/workflows/ci.yml`（Node 20/22/24：typecheck + build + test + pack 清单）、
+  `.github/workflows/publish.yml`（tag 校验 + npm Trusted Publishing / OIDC，零令牌发布）。
 - **主题化视觉层**：新增 `src/client/styles.ts`，注入式样式表 + `className` 体系；
   卡片、圆钮、预览窗、目录树全面改用 dsh 的 `--dsw-alias-*` token，浅色/深色主题自动跟随
   （token 缺失时退回原深色配色）。
