@@ -1,0 +1,6 @@
+url: https://github.com/deepseekharness-dsh/dsh-local-file-share
+name: deepseekharness-dsh/dsh-local-file-share
+category: tools
+description:
+  en: Lets the agent list, read and write files inside a local directory the user authorizes in the browser through the File System Access API, relayed to the dsh host over a private WebSocket. Nothing is copied onto the host.
+  zh: 让 agent 读写用户浏览器授权目录里的本机文件（File System Access API），经私有 WebSocket 中继回 dsh 宿主，不往宿主复制文件。

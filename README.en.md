@@ -187,7 +187,7 @@ Maintainer notes: the full checklist lives in [`docs/publishing.md`](https://git
 4. **Plugin market**: dshmarket installs **only from the curated
    [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) registry** — open a
    PR there adding `data/plugins/deepseekharness-dsh__dsh-local-file-share.yml`
-   (contents in `publish/awesome-dsh-plugin-投稿.yml`). Do **not** PR plugin entries against the
+   (contents in `publish/awesome-dsh-plugin.yml`). Do **not** PR plugin entries against the
    dshmarket repo.
 
 ## License and provenance

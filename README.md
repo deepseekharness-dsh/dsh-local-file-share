@@ -173,7 +173,7 @@ npm run verify      # 上面三步串起来（prepublishOnly 也走它）
 4. **插件市场**：dshmarket 的安装来源**只认 curated registry**
    [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) ——
    往那个仓库提一个 PR，新增 `data/plugins/deepseekharness-dsh__dsh-local-file-share.yml`
-   （内容见 `publish/awesome-dsh-plugin-投稿.yml`）。**不要**往 dshmarket 主仓库提插件条目。
+   （内容见 `publish/awesome-dsh-plugin.yml`）。**不要**往 dshmarket 主仓库提插件条目。
 
 ## 许可与出处
 
