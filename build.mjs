@@ -1,5 +1,5 @@
 /**
- * dsh-browser-fs 构建脚本（复刻 dsh packages/client/tsdown.client.ts 的产物契约）：
+ * dsh-local-file-share 构建脚本（复刻 dsh packages/client/tsdown.client.ts 的产物契约）：
  *
  *  - lib/index.js  — host 半，ESM，跑在 dsh 宿主 Node 进程里。
  *    `ws` 与 `@deepseek-ai/dsh-tools` 保持 external：运行时由 profile 的
@@ -11,12 +11,12 @@
  *    其余（本包自己的 wire/fs/store/ui）全部 inline。
  *  - lib/highlight.mjs — 语法高亮懒加载 chunk（ESM）：hljs 核心 + 语言子集
  *    + 暗色主题 CSS（.css 以 text loader 内联成字符串，运行时注入 <style>）。
- *    不进 client.js（体积考量），host 半经 /browser-fs/highlight.mjs 路由
+ *    不进 client.js（体积考量），host 半经 /local-file-share/highlight.mjs 路由
  *    供给，client 首次预览已映射语言的文件时才动态 import。
  */
 import { build } from 'esbuild'
 
-const PLUGIN_ID = 'dsh-browser-fs'
+const PLUGIN_ID = 'dsh-local-file-share'
 
 const shared = {
   bundle: true,

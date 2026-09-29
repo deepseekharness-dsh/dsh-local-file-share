@@ -1,227 +1,203 @@
-# dsh-browser-fs
+# Local File Share · 本地文件共享
 
 [中文](README.md) | **English**
 
+> Let the dsh agent work directly with files on **your** machine — nothing is copied into the
+> container, nothing lands on the server's disk.
+
 [![awesome · DSH plugin](https://awesome-dsh-plugin.com/badge.svg)](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin#tools--capabilities)
-[![npm](https://img.shields.io/npm/v/dsh-browser-fs)](https://www.npmjs.com/package/dsh-browser-fs)
-[![license: MIT](https://img.shields.io/npm/l/dsh-browser-fs)](LICENSE)
+[![npm](https://img.shields.io/npm/v/dsh-local-file-share)](https://www.npmjs.com/package/dsh-local-file-share)
+[![license: MIT](https://img.shields.io/npm/l/dsh-local-file-share)](LICENSE)
 
-Lets dsh's agent read and write local files on **the machine where the browser runs**. dsh's
-built-in fs tools can only reach the host machine; when dsh is deployed remotely, the browser
-is on another machine and the agent cannot touch your local files. This plugin fills the gap:
+**One floating card, one bridge:** authorize a local directory in the dsh page and the agent can
+drive it with three model tools — `local_file_list`, `local_file_read`, `local_file_write`.
+Bytes travel in memory over a private WebSocket relay: not a single one is written to the dsh host.
 
-The user authorizes a local directory in the dsh web page via the File System Access API
-(`showDirectoryPicker`), and the handle is stored in IndexedDB; the agent works with three
-model tools — list/read/write — whose calls are relayed to the browser over the plugin's own
-WebSocket channel.
+---
 
-![agent calling browser_fs_read to read hello.txt from the authorized directory; the plugin card sits at bottom-right](docs/screenshot-in-action.png)
+## Why
+
+dsh usually runs in a container or on a remote server, so its built-in fs tools only see the host
+machine — while your documents, drawings, manuals and code live on **your** machine. Copying a whole
+directory into the container is slow and expensive (a single installer image can be 15 GiB).
+
+The browser, however, can see both sides, so it becomes the bridge:
+
+```
+local disk ──File System Access API──► your browser tab
+                                         │  private WebSocket (same-origin + session check)
+                                         ▼
+                              dsh host process (in-memory relay)
+                                         │
+                                         ▼
+                        the agent's three tools: list / read / write
+```
+
+## Features
+
+| | |
+|---|---|
+| **Zero footprint** | No disk writes, no cache, no copies — only the memory of one open tab |
+| **Floating card** | A 40px orb (theme-aware SVG icon + status dot) that expands into the full panel; draggable, resizable via the bottom handle, position and height remembered locally |
+| **Theme-aware** | Every surface uses dsh's `--dsw-alias-*` tokens, so light and dark match the host; full `prefers-reduced-motion` fallback |
+| **Keyboard ready** | The title row is focusable; arrow keys move the card (`Shift` to speed up), `Esc` collapses, double-click collapses; the status line is announced via `aria-live` |
+| **Directory tree** | Lazy loading, recursive search, hover-revealed "copy path"; click a file name for a preview window (images / text / syntax-highlighted code) |
+| **Read and write** | In full mode, text and code can be edited and saved back to your machine from the preview window; compat mode degrades to read-only |
+| **Multi-device** | Every connected device authorizes its own directory; tool results carry the executing device label (e.g. `device: Windows · Chrome`) |
+| **Secure** | The WebSocket upgrade validates same-origin *and* the browser session (`connection.requestRejection`), answering 401/403 otherwise; no third-party service involved |
+
+## UI
+
+- **Collapsed** — the orb in the bottom-right corner; its status dot encodes connection/authorization
+  state (green = authorized, amber = pending, grey = none/offline).
+- **Expanded** — status line, editable device nickname, action buttons, the "directory contents" tree,
+  and a bottom height handle.
+- **Preview window** — pinned header (name / size / edit / close), a path row and an independently
+  scrolling body; draggable and resizable.
+
+> Screenshot: `docs/screenshot-upstream.png` shows the upstream (`dsh-browser-fs`) UI for reference;
+> a fresh screenshot of this theme-aware version is still to be added.
 
 ## How it works
 
-A two-sided plugin (cordis plugin system):
+A two-sided cordis plugin:
 
-- **Host half** (`src/index.ts`, runs in dsh's host Node process)
-  - `ctx.webServer.registerUpgrade` registers the WS channel at the exact path `/browser-fs/ws`;
-  - `ctx.tools.register` registers `browser_fs_list` / `browser_fs_read` / `browser_fs_write`;
-  - execute sends a `{type:'call', rpcId, op, args}` frame to the tab "holding the authorized
-    handle" and pairs result frames by rpcId; `exec.signal` is wired to pending-call abort
-    (a cancel frame is also sent to the browser).
-- **Client half** (`src/client/`, runs in the browser)
-  - On startup, reads the handle back from IndexedDB and runs `queryPermission`; connects
-    back to the host's WS (exponential-backoff reconnect);
-  - Executes File System Access operations on the authorized directory when call frames
-    arrive, and replies with result frames;
-  - Registers a floating card in the `shell.overlay` layer: shows connection/authorization
-    status and provides 授权目录 (authorize) / re-authorize / switch / revoke buttons.
-  - Broadcasts `{type:'state', hasHandle, dirName}` on authorization changes; the host only
-    dispatches calls to tabs with `hasHandle=true` (executor selection when multiple tabs
-    are online).
+- **Host half** (`src/index.ts`, in the dsh host's Node process)
+  - registers the exact WebSocket path `/local-file-share/ws` via `ctx.webServer.registerUpgrade`;
+  - registers `local_file_list` / `local_file_read` / `local_file_write` on `ctx.tools`;
+  - sends `{type:'call', rpcId, op, args}` frames to the tab that **holds a handle**, pairing result
+    frames by `rpcId`; `exec.signal` drives aborts (a cancel frame goes to the browser too);
+  - serves the lazy syntax-highlight chunk at the sibling route `/local-file-share/highlight.mjs`.
+- **Client half** (`src/client/`, in the browser)
+  - restores the directory handle from IndexedDB and calls `queryPermission` on start, then connects
+    back to the host WebSocket with exponential-backoff reconnects;
+  - executes File System Access operations for incoming call frames and replies with result frames;
+  - registers the floating card in `shell.overlay` and broadcasts `{type:'state', hasHandle, dirName, label}`;
+  - when several tabs are online, the host only dispatches to `hasHandle=true` tabs.
 
-## Installation
+## Install
 
 ```sh
-# Install from npm (recommended; no install scripts, no build authorization needed)
-dsh plugin --profile web add dsh-browser-fs
+# 1) from npm (recommended: no install scripts, no build approval)
+dsh plugin --profile web add dsh-local-file-share
 
-# Or install from GitHub (build artifacts are committed, zero install scripts)
-dsh plugin --profile web add github:whitefirer/dsh-browser-fs
+# 2) straight from GitHub (lib/ artifacts are committed; still zero scripts)
+dsh plugin --profile web add github:OWNER/dsh-local-file-share
 
-# Local development: reinstall after changes (run npm run build first; lib/ is committed)
-npm install
-npm run build
-dsh plugin --profile web add file:/abs/path/to/dsh-browser-fs
-# Restart dsh to take effect
+# 3) from the Gitee mirror (same artifacts)
+dsh plugin --profile web add git+https://gitee.com/OWNER/dsh-local-file-share.git
+
+# 4) local development: rebuild then reinstall (lib/ is committed)
+npm install && npm run verify
+dsh plugin --profile web add file:/abs/path/to/dsh-local-file-share
 ```
 
-`dsh plugin add` installs the package into the profile's dependencies and, thanks to the
-`dsh.bundle.patch` manifest declaration, automatically appends `dsh-browser-fs` to the
-`dsh.profile.bundles` layer stack (the patch is this repo's `cordis.patch.yml`: one insert
-line mounts the host half; its config carries `wsPath` and `requestTimeoutMs`).
+**Restart dsh afterwards** (the host half must reload its module and routes), then reopen the page to
+see the orb in the bottom-right corner.
 
-## Usage
+## Quick start
 
-1. Open the dsh web page; the "browser-fs 浏览器文件" card appears at the bottom-right
-   (expanded by default when unauthorized; collapses to a 📁 ball after authorization —
-   click to expand, press-and-hold to drag, "—" to collapse; collapse state persists in
-   localStorage across reloads, and the ball's status dot matches the card's colors);
-2. Click 授权目录 (authorize) and pick a local directory in the system picker (readwrite
-   permission required);
-3. The card's 目录内容 (contents) section browses the authorized directory directly: a
-   lazy-loaded tree (click a directory row to expand/collapse, 200 entries per level with
-   a "…N more" overflow line), plus a search box that recursively matches file/directory
-   paths; file rows show sizes and a 复制路径 (copy path) button that copies the relative
-   path — handy for pasting to the AI;
-4. The agent can then use the three tools:
-   - `browser_fs_list { path?, recursive? }` — list a directory (relative path/kind/size, optional recursion)
-   - `browser_fs_read { path, maxBytes? }` — read a text file (256 KiB cap by default, truncation marked)
-   - `browser_fs_write { path, content }` — write a text file (parent directories auto-created, returns byte count)
+1. Open the dsh web page → the orb → **Authorize directory** → pick a directory in the system dialog.
+   The browser asks for **read/write** permission (the plugin requests `mode: 'readwrite'`) — if the
+   agent should only read, simply never ask it to write.
+2. Tell the agent *"list what's inside my authorized directory"* and it calls `local_file_list`.
+3. From there: read a file (`local_file_read`), write or create one (`local_file_write`), or click a
+   file name in the card to preview it yourself.
 
-The tool descriptions tell the model explicitly: these operate on the **browser machine's**
-local disk, not the host's filesystem.
+## Tool reference
 
-The card UI language follows dsh's own Settings → General → Language switch (the plugin
-subscribes to the dsh client's `locale` service, live; compositions without that service
-fall back to `<html lang>`/browser language).
+| Tool | Arguments | Returns |
+|---|---|---|
+| `local_file_list` | `path?` (relative to the authorized root; omit for the root), `recursive?` (default false) | Directory entries: relative path, kind, size (all levels when recursive) |
+| `local_file_read` | `path` (required), `maxBytes?` (default 256 KiB, truncation is marked) | UTF-8 text content |
+| `local_file_write` | `path`, `content` (parent directories created; existing files overwritten) | Number of bytes written |
 
-## Preview & refresh
+All three descriptions state plainly that they operate on **the browser machine's local disk, not the
+dsh host**. With several devices holding handles, results name the executing device.
 
-Click a **file name** in the contents tree to pop the preview window (mask + default-size
-window, min(720px,92vw) × min(70vh,560px); drag the title bar to move it, drag the
-bottom-right corner to resize; pinned title bar — file name + size/truncation note + ✕,
-with the relative path below; content area scrolls independently; ✕ / mask click / ESC to
-close):
+## Security model
 
-- **Images** (png/jpg/jpeg/gif/webp/svg/ico/bmp): read as arrayBuffer into a blob URL shown
-  with `<img>` (revokeObjectURL on close); images over 8MB are not fetched — a too-big
-  notice is shown instead;
-- **Everything else as text**: only the first 64KB, UTF-8 decoded, monospace `<pre>`;
-  truncation is marked ("仅前 64KB"); decoded text containing NUL counts as binary and shows
-  "二进制文件不支持预览" (binary files not supported).
+- **Scope**: only the directory you selected (and its subtree) is reachable; paths outside it are not.
+- **Permission semantics**: the plugin requests `readwrite`; a write happens only when you (or the
+  agent) explicitly ask for one. The File System Access API does not let a plugin re-authorize without
+  a user gesture.
+- **Connection checks**: the WebSocket upgrade verifies same-origin (`Origin` matching `Host`) *and*
+  the browser session (`connection.requestRejection`), closing with 401/403 otherwise — another site
+  cannot ride on your session.
+- **Data path**: bytes move only between your browser and your dsh host; no third-party service is used.
+- **The page must be online**: with no tab connected, tool calls fail immediately with a clear error
+  instead of hanging.
 
-Preview takes the same path in both modes (the full/compat backends each implement
-`readBlob`), so it works in read-only compat mode too.
+## Compatibility and limits
 
-Text/code preview supports **editing** (full mode only, i.e. when the backend is writable):
-click **Edit** to load the complete file into a textarea; saving goes through the same
-backend write path as the agent tool `browser_fs_write` (`FsBackend.write`), then the
-preview refreshes automatically. Large files are still shown as the first 64KB only, and the
-editor clearly notes that the full file has been loaded and saving overwrites the whole
-file. Compat mode stays read-only and does not show the edit entry. While editing, ESC first
-exits editing; a second ESC closes the window. The editor shows line numbers and uses the
-same syntax highlighting described below.
+| | Full mode | Compat mode (automatic) |
+|---|---|---|
+| Trigger | HTTPS or `localhost` (secure context) | plain-HTTP LAN access, etc. |
+| Selection | `showDirectoryPicker` system picker | `input[webkitdirectory]` directory / multi-file picker |
+| list / read | ✅ | ✅ (read-only snapshot) |
+| write | ✅ | ❌ explicit error |
+| Persistence | ✅ IndexedDB, restored after reload | ❌ re-select after reload |
 
-Text preview comes with **syntax highlighting**: the extension maps to a language
-(js/ts/tsx/py/go/rs/java/c/cpp/h/sh/yaml/json/toml/md/html/css/xml/sql, etc.; unmapped
-extensions stay plain text), and only the truncated first 64KB is highlighted. Highlighting
-uses a highlight.js language subset with the GitHub Dark theme; to keep the main bundle
-small it ships as a separate chunk — the host half serves it at `highlight.mjs` next to
-`/browser-fs/ws`, and it is dynamically imported the first time a preview hits a mapped
-language (plain text with a "语法着色加载中…" note while loading, silent fallback to plain
-text on failure).
-
-**The card is draggable**: the title row is the drag handle (mouse and touch; movement
-beyond 4px counts as a drag, so collapse/button clicks are never eaten); a bottom handle
-lets you drag vertically to resize the card height (minimum 160px, persisted under
-localStorage key `dsh-browser-fs:card-height`); while dragging, the panel/ball tracks the
-pointer directly, with clamping applied only on release and window resize. The ball always
-stays fully inside the viewport (flush to edges, no hidden margins). An expanded panel that has never been dragged derives its initial position from
-the ball (flipping leftward/upward when the ball sits in the right/bottom half, then
-clamping into a 10px margin with width/height capped to the viewport); once dragged it
-**stays where it was dropped** (viewport clamp only, never flipped), and the position is
-remembered across collapse/expand and page reloads (same localStorage key
-`dsh-browser-fs:card-pos` as the ball). The collapsed 📁 ball sits at the anchor (the
-card's top-left); it is draggable too — a release without movement expands the card.
-Card, ball and preview window render at body level (z-100/200): above common overlays
-(e.g. sidebar-plugin panels) so clicks are never stolen by other plugins, yet still below
-dsh's own modals (z-1000+).
-
-The "↻" at the end of the authorization button row refreshes the directory:
-
-- **Full mode**: clears all directory-tree caches (expanded set / loaded levels) and
-  re-fetches the root level;
-- **Compat mode**: the cache is the selection-time File snapshot and the browser allows no
-  silent re-read, so refreshing is meaningless — the button reopens the picker instead
-  (same as 重新选择).
-
-## Multiple devices
-
-Multiple devices can each keep a dsh page open; the model sees "each device authorizes its
-own local directory":
-
-- Each device's browser tab derives a device label from its UA (e.g. "Windows · Chrome" /
-  "Android · Chrome" / "macOS · Safari"); click ✏️ on the card to set a nickname (stored in
-  localStorage `dsh-browser-fs:device-name`; the nickname wins over UA derivation).
-- Every tab reports `{hasHandle, dirName, label}` to the host; the host maintains an
-  executor roster and broadcasts it to all online tabs. Devices without authorization see
-  "当前授权在设备：某某（目录名）" on the card — no more guessing where the grant lives.
-- Agent tool calls route to a handle-holding device: with several holders, the
-  **first-connected** one wins (deterministic). Tool results and error messages carry the
-  executor's label (e.g. "已写入 3 字节到 b.txt（设备：X）"), so the conversation shows which
-  device ran the call.
-- Authorize a directory on this machine and it joins the executors; when a device
-  disconnects or revokes, the roster shrinks immediately.
-
-## LAN/mobile access & secure context
-
-The File System Access API is gated behind secure contexts: it only exists under HTTPS or
-localhost. On LAN http (e.g. `http://192.168.0.x:9101`, common when a phone goes through a
-proxy), `window.showDirectoryPicker` simply does not exist and cannot be polyfilled. This
-plugin feature-detects with `typeof window.showDirectoryPicker === 'function'` (not
-`isSecureContext` — a proxy-injected polyfill may have patched it), and falls back to
-**compat mode** when missing. Capability differences:
-
-| | Full mode | Compat mode |
-| --- | --- | --- |
-| Trigger | Secure context (HTTPS/localhost) | Automatic fallback on insecure contexts |
-| Picking | System directory picker (showDirectoryPicker) | Dual entries: input[webkitdirectory] for directories / multiple for file multi-select |
-| list / read | ✓ | ✓ (in-memory File map; read slices instead of loading whole files) |
-| write / mutations | ✓ | ✗ explicit "兼容模式只读…" (compat mode is read-only) error |
-| Grant persistence | ✓ IndexedDB, restored on reload | ✗ nothing to persist; re-pick after reload (noted in the status line) |
-| Directory-tree browsing | ✓ | ✓ same path (the backend abstraction is shared) |
-
-**Mobile behavior**: the compat authorization area offers two side-by-side entries —
-选择目录 (pick directory) and 选多个文件 (pick files) — instead of relying on capability
-probing alone; the picker input is positioned off-screen (not display:none, which mobile
-browsers and the WeChat WebView block from programmatic clicks). On iOS, directory picking
-may be a dead end (the webkitdirectory attribute exists but picking a directory returns 0
-files): the card then shows a clear error ("没读到文件…请改用「选多个文件」") and the
-directory entry silently switches to multi-select from then on — never silent. After a
-successful pick, the status line shows what was selected (directory name or "N 个文件").
-
-In compat mode the card shows a 兼容模式 (compat mode) badge with an explanation. Three ways
-to get full mode:
-
-1. SSH port-forward to localhost: `ssh -L 9101:127.0.0.1:9101 user@host`, then visit
-   `http://127.0.0.1:9101`;
-2. In Chrome, open `chrome://flags/#unsafely-treat-insecure-origin-as-secure` and allowlist
-   the LAN origin;
-3. Deploy HTTPS.
-
-## Limitations
-
-- **Secure context**: the File System Access API requires an HTTPS or localhost context;
-  over plain-HTTP remote access the authorize button fails with a clear error.
-- **A tab must stay open**: with no browser tab online, tool calls fail fast with a clear
-  error; same when tabs are online but no directory is authorized.
-- The agent tools only support UTF-8 text read/write (binary writes are out of scope;
-  images preview inside the card only — see "Preview & refresh").
-- The client half always connects to the default WS path `/browser-fs/ws` (the highlight
-  chunk path derives from the same directory: `/browser-fs/highlight.mjs`); if the host
-  half's `wsPath` config is changed, the client's `DEFAULT_WS_PATH` (`src/wire.ts`) must be
-  updated in sync and the bundle rebuilt.
-- The host half peer-depends on `@deepseek-ai/dsh-tools` (defineTool); at runtime it
-  resolves through the profile's flat node_modules fallback to the same copy bundled with
-  the dsh installation.
+- **A handle expiring on reload** is the browser's security model (permissions are not always
+  persistent), not a bug;
+- **Cross-origin iframes** cannot open the directory picker — authorize from the top-level page (the
+  card offers a direct link);
+- **Mobile**: some browsers (e.g. Huawei) report the picker as available but ignore the tap; the plugin
+  falls back to the compat multi-file entry;
+- Text (UTF-8) only for read/write; binary writes are out of scope and images are preview-only.
 
 ## Development
 
 ```sh
-npm run build      # esbuild: host half ESM + client half CJS closure (__ModuleLoader__ wrapped) + highlight lazy chunk (lib/highlight.mjs)
-npm run typecheck  # tsc --noEmit
-npm run smoke      # link self-check: call→result round-trip / abort / disconnect / cross-origin rejection (scripts/smoke.mjs)
+npm install
+npm run build       # node build.mjs → lib/ (host ESM + client CJS closure + highlight chunk)
+npm run typecheck   # tsc --noEmit
+npm run smoke       # protocol round trip / abort / disconnect / cross-origin refusal / pure geometry
+npm run verify      # all three (also wired to prepublishOnly)
 ```
 
-After changing code: re-run `npm run build`, then `dsh plugin --profile web add
-file:<this dir>` once more (file: dependencies are packed copies, not symlinks), and
-restart dsh.
+**`lib/` is committed**: always `npm run build` before committing, or you ship stale code.
+
+`src/client/` map:
+
+| File | Responsibility |
+|---|---|
+| `index.ts` | client entry, WS reconnect, frame dispatch, card data source |
+| `ui.tsx` | floating card / directory tree / preview window (React JSX) |
+| `styles.ts` | theme-aware style layer (injected stylesheet + `lfs-` class system) |
+| `fs.ts` / `files-backend.ts` | File System Access operations and backend abstraction |
+| `store.ts` | IndexedDB handle storage |
+| `preview.ts` / `highlight.ts` | preview classification and syntax highlighting |
+| `compat-picker.ts` | fallback picker without the File System Access API |
+| `device.ts` / `i18n.ts` | device labels / zh+en strings following dsh's language |
+| `panel-fit.ts` | viewport clamping for the floating panel |
+
+## Releasing and publishing
+
+**Replace the placeholder first** (this repo uses `OWNER`):
+
+```sh
+grep -rl "OWNER" . --exclude-dir=node_modules --exclude-dir=.git | xargs sed -i 's/OWNER/your-account/g'
+```
+
+1. **npm**: bump `package.json`, commit, then push a matching tag (e.g. `v0.3.0`). GitHub Actions
+   (`.github/workflows/publish.yml`) publishes with `NPM_TOKEN` and `--provenance`; the workflow
+   verifies that the tag equals the package version. Manual fallback: `npm publish --access public`.
+2. **GitHub**: create the repository, `git remote add origin …`, `git push -u origin main --tags`.
+3. **Gitee (mirror)**: `git remote add gitee git@gitee.com:OWNER/dsh-local-file-share.git` then
+   `git push gitee main --tags`. Gitee is a code mirror and China-friendly distribution channel —
+   the npm package still lives on npmjs (the market installs by npm name).
+4. **Plugin market**: dshmarket installs **only from the curated
+   [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin) registry** — open a
+   PR there adding one entry (npm package name + repository URL) and both the site and the market pick
+   it up automatically, usually within a day. Do **not** PR plugin entries against the dshmarket repo.
+
+## License and provenance
+
+MIT; upstream attribution and the derived-work note are kept in [`LICENSE`](LICENSE).
+
+This repository is a derivative of [`dsh-browser-fs`](https://github.com/whitefirer/dsh-browser-fs)
+by [whitefirer](https://github.com/whitefirer) (MIT): the WebSocket relay protocol, the two-sided
+host/client design, the File System Access backend, the highlight chunk, the compat picker and the
+multi-device roster all come from upstream. This version adds the rename, a theme-aware visual layer,
+interaction and accessibility work, and the WebSocket session check. See [CHANGELOG.md](CHANGELOG.md).

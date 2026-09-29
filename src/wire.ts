@@ -1,5 +1,5 @@
 /**
- * dsh-browser-fs 的私有 wire 协议：host 半（Node）与 client 半（浏览器）之间
+ * dsh-local-file-share 的私有 wire 协议：host 半（Node）与 client 半（浏览器）之间
  * 经自建 WebSocket 通道传递的帧。两侧各自 bundle 本模块（type/常量层，
  * 无共享运行时身份）。
  *
@@ -8,11 +8,11 @@
  *                    CancelFrame 调用方取消（exec.signal aborted）
  *   browser → host:  ResultFrame 一次调用的结果
  *                    StateFrame  上线/授权状态广播（host 据此挑选执行者）
- * @module dsh-browser-fs/wire
+ * @module dsh-local-file-share/wire
  */
 
 /** WS 通道的默认精确 pathname（host 半 config.wsPath 可覆盖；client 半固定用默认值）。 */
-export const DEFAULT_WS_PATH = '/browser-fs/ws'
+export const DEFAULT_WS_PATH = '/local-file-share/ws'
 
 /**
  * 语法高亮模块（懒加载 ESM chunk）的 HTTP pathname：与 WS 通道同目录下的

@@ -2,7 +2,7 @@
  * 兼容模式文件选择器的纯决策逻辑（DOM 无关，smoke 可直接断言）：
  *  - resolveCompatInput：按用户入口 + 能力/前科决定 input 的真实形态；
  *  - classifyCompatChange：change 事件结果分类（0 文件分支绝不静默）。
- * @module dsh-browser-fs/client/compat-picker
+ * @module dsh-local-file-share/client/compat-picker
  */
 
 /** 用户点的选择入口：整目录（webkitdirectory）/ 多选文件（multiple）。 */

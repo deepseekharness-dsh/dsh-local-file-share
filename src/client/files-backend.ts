@@ -5,7 +5,7 @@
  * 无 IndexedDB 持久化，刷新后需重选。
  *
  * 只读边界：write 抛 READ_ONLY_ERROR。
- * @module dsh-browser-fs/client/files-backend
+ * @module dsh-local-file-share/client/files-backend
  */
 
 import {

@@ -2,7 +2,7 @@
  * 设备标签派生：从 User-Agent 最小解析出「OS · 浏览器」形态的标签
  * （如 "Windows · Chrome" / "Android · Chrome" / "macOS · Safari"）。
  * 刻意最小实现，不引依赖；昵称（localStorage）优先于本派生值。
- * @module dsh-browser-fs/client/device
+ * @module dsh-local-file-share/client/device
  */
 
 /** 解析 OS。顺序敏感：CrOS/Android 的 UA 含 Linux，iOS 的 UA 可能含 Mac。 */

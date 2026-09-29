@@ -1,5 +1,5 @@
 /**
- * dsh-browser-fs client 半（浏览器）：连回 host 半的 WS 通道，接收 call 帧、
+ * dsh-local-file-share client 半（浏览器）：连回 host 半的 WS 通道，接收 call 帧、
  * 在本机授权目录上执行文件操作、回发 result 帧；同时把授权卡片注册进
  * shell.overlay 层。
  *
@@ -12,7 +12,7 @@
  *
  * 产物契约：esbuild 打成 CJS 闭包，首尾包装 window.__ModuleLoader__.load
  * （见 build.mjs）；external 仅 react / react/jsx-runtime（模块表回答）。
- * @module dsh-browser-fs/client
+ * @module dsh-local-file-share/client
  */
 
 import { DEFAULT_WS_PATH, parseHostFrame, type ResultFrame, type RosterExecutor } from '../wire.js'
@@ -49,7 +49,7 @@ interface LocaleFace {
  * @param ctx - client 根上下文。
  */
 export function apply(ctx: ClientCtx): void {
-  const COLLAPSED_KEY = 'dsh-browser-fs:collapsed'
+  const COLLAPSED_KEY = 'dsh-local-file-share:collapsed'
   const storedCollapsed = ((): boolean | null => {
     try {
       const raw = localStorage.getItem(COLLAPSED_KEY)
@@ -65,7 +65,7 @@ export function apply(ctx: ClientCtx): void {
   /** 设备昵称（localStorage）；空串/读取失败视为未设置。 */
   const storedNickname = ((): string | null => {
     try {
-      const raw = localStorage.getItem('dsh-browser-fs:device-name')
+      const raw = localStorage.getItem('dsh-local-file-share:device-name')
       return raw === null || raw.trim() === '' ? null : raw
     } catch {
       return null
@@ -79,7 +79,7 @@ export function apply(ctx: ClientCtx): void {
    * showDirectoryPicker 不存在即落入兼容模式（只读 File 映射）。
    */
   const pickerAvailable = typeof window.showDirectoryPicker === 'function'
-  console.log('[browser-fs] init: showDirectoryPicker', pickerAvailable ? '可用（完整模式）' : '不可用（兼容模式）', '| UA:', navigator.userAgent)
+  console.log('[local-file-share] init: showDirectoryPicker', pickerAvailable ? '可用（完整模式）' : '不可用（兼容模式）', '| UA:', navigator.userAgent)
 
   let state: BrowserFsState = {
     wsConnected: false,
@@ -148,7 +148,7 @@ export function apply(ctx: ClientCtx): void {
 
   const onCall = async (rpcId: string, op: 'list' | 'read' | 'write', args: Record<string, unknown>): Promise<void> => {
     if (backend === null || !ready()) {
-      reply({ type: 'result', rpcId, ok: false, error: 'browser-fs: this tab holds no authorized directory' })
+      reply({ type: 'result', rpcId, ok: false, error: 'local-file-share: this tab holds no authorized directory' })
       return
     }
     const abort = new AbortController()
@@ -253,7 +253,7 @@ export function apply(ctx: ClientCtx): void {
   /** 最近一次成功选择的形态（↻ 刷新按它重开选择器）。 */
   let compatPickMode: CompatPickMode = 'directory'
   const openCompatPicker = (mode: CompatPickMode): void => {
-    console.log('[browser-fs] openCompatPicker, mode =', mode)
+    console.log('[local-file-share] openCompatPicker, mode =', mode)
     if (compatInput === null) {
       const input = document.createElement('input')
       input.type = 'file'
@@ -267,7 +267,7 @@ export function apply(ctx: ClientCtx): void {
       })
       input.addEventListener('change', () => {
         const files = input.files
-        console.log('[browser-fs] change: files =', files?.length ?? 0, ', webkitdirectory =', input.webkitdirectory)
+        console.log('[local-file-share] change: files =', files?.length ?? 0, ', webkitdirectory =', input.webkitdirectory)
         const outcome = classifyCompatChange(files?.length ?? 0, input.webkitdirectory)
         if (outcome.kind === 'selected' && files !== null) {
           compatPickMode = outcome.directory ? 'directory' : 'files'
@@ -295,7 +295,7 @@ export function apply(ctx: ClientCtx): void {
     compatInput.multiple = true
     // 清空 value 允许重选同一目录（否则 change 不触发）。
     compatInput.value = ''
-    console.log('[browser-fs] input.click() 触发选择器, directory =', shape.directory)
+    console.log('[local-file-share] input.click() 触发选择器, directory =', shape.directory)
     compatInput.click()
   }
 
@@ -318,9 +318,9 @@ export function apply(ctx: ClientCtx): void {
         const permission = await handle.requestPermission({ mode: 'readwrite' })
         setState({ permission, dirName: handle.name })
       } else {
-        console.log('[browser-fs] showDirectoryPicker 调用')
+        console.log('[local-file-share] showDirectoryPicker 调用')
         const picked = await showDirectoryPicker({ mode: 'readwrite' })
-        console.log('[browser-fs] 目录已选:', picked.name)
+        console.log('[local-file-share] 目录已选:', picked.name)
         setHandle(picked)
         await saveHandle(picked)
         setState({ permission: 'granted', dirName: picked.name })
@@ -328,7 +328,7 @@ export function apply(ctx: ClientCtx): void {
       sendState()
     } catch (error) {
       const name = error instanceof DOMException ? error.name : 'Error'
-      console.log('[browser-fs] showDirectoryPicker 失败:', name, error instanceof Error ? error.message : '')
+      console.log('[local-file-share] showDirectoryPicker 失败:', name, error instanceof Error ? error.message : '')
       if (isMobileLike) {
         setState({ error: '当前浏览器的目录选择器不可用，已切换兼容模式' })
         openCompatPicker('directory')
@@ -383,8 +383,8 @@ export function apply(ctx: ClientCtx): void {
       const trimmed = name.trim()
       const nickname = trimmed === '' ? null : trimmed
       try {
-        if (nickname === null) localStorage.removeItem('dsh-browser-fs:device-name')
-        else localStorage.setItem('dsh-browser-fs:device-name', nickname)
+        if (nickname === null) localStorage.removeItem('dsh-local-file-share:device-name')
+        else localStorage.setItem('dsh-local-file-share:device-name', nickname)
       } catch {
         // localStorage 不可用：昵称只在本次页面存活。
       }
@@ -426,7 +426,7 @@ export function apply(ctx: ClientCtx): void {
       compatInput?.remove()
       compatInput = null
     }
-  }, 'browser-fs: websocket lifecycle')
+  }, 'local-file-share: websocket lifecycle')
 
   // 语言跟随：优先 dsh 的 locale 服务（dsh-client-locale 经 ctx.provide 提供，
   // 是 Settings → General → Language 的真实载体）；缺席的组合退回
@@ -440,24 +440,24 @@ export function apply(ctx: ClientCtx): void {
       setState({ lang: langFromTag(face.getSnapshot().active) })
     }
     adopt()
-    ctx.effect(() => face.subscribe(adopt), 'browser-fs: locale follow')
+    ctx.effect(() => face.subscribe(adopt), 'local-file-share: locale follow')
   })
   ctx.effect(
     () => subscribeLang(() => {
       if (!localeDriven) setState({ lang: detectLang() })
     }),
-    'browser-fs: lang fallback (html lang)',
+    'local-file-share: lang fallback (html lang)',
   )
 
   ctx.effect(() => {
     let dispose: (() => void) | undefined
     ctx.slots.inject('shell.overlay', () => {
       dispose = ctx.slots.register(
-        { name: 'shell.overlay', id: 'browser-fs', order: 100, label: '浏览器文件' },
+        { name: 'shell.overlay', id: 'local-file-share', order: 100, label: '浏览器文件' },
         card,
       )
       return dispose
     })
     return () => { dispose?.() }
-  }, 'browser-fs: overlay card')
+  }, 'local-file-share: overlay card')
 }

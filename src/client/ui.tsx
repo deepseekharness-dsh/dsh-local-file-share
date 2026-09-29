@@ -21,7 +21,7 @@
  * 弹出预览窗（FilePreview：固定尺寸窗口 + 钉顶标题栏；图片走 blob URL，文本
  * 取前 64KB，已映射语言经懒加载高亮 chunk 做语法着色）；授权行的「↻」
  * 刷新按钮经 apiRef 调 DirTree 的清缓存重拉（兼容模式改为重开选择器）。
- * @module dsh-browser-fs/client/ui
+ * @module dsh-local-file-share/client/ui
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
@@ -31,6 +31,7 @@ import { DEFAULT_HIGHLIGHT_PATH, type RosterExecutor } from '../wire.js'
 import type { FsBackend } from './fs.js'
 import { STRINGS, type Lang, type Strings } from './i18n.js'
 import { FAB_SIZE, clampPanelToViewport, fitPanelToViewport } from './panel-fit.js'
+import { ensureStyles } from './styles.js'
 import {
   MAX_IMAGE_PREVIEW_BYTES,
   TEXT_PREVIEW_BYTES,
@@ -99,6 +100,11 @@ export interface CardSource {
   readonly actions: CardActions
 }
 
+/**
+ * 卡片定位与尺寸。外观（surface/边框/圆角/阴影/字体）一律见 styles.ts 的
+ * `.lfs-card`：内联样式表达不了 :hover / :focus-visible / 媒体查询，视觉留在
+ * 样式表里才能跟主题、能键盘操作；这里只负责定位与尺寸约束。
+ */
 const cardStyle: CSSProperties = {
   position: 'fixed',
   right: '16px',
@@ -108,51 +114,29 @@ const cardStyle: CSSProperties = {
   // 100：压过侧边栏（50/60），远低于 dsh 自身模态/toast（1000/1100）。
   zIndex: 100,
   pointerEvents: 'auto',
-  minWidth: '240px',
-  maxWidth: '340px',
-  padding: '10px 12px',
-  borderRadius: '10px',
-  background: 'rgba(32, 33, 36, 0.92)',
-  color: '#e8eaed',
-  fontSize: '12px',
-  lineHeight: 1.5,
-  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.35)',
-  fontFamily: 'system-ui, sans-serif',
+  minWidth: '248px',
+  maxWidth: '352px',
 }
 
-const buttonStyle: CSSProperties = {
-  border: '1px solid rgba(255, 255, 255, 0.25)',
-  borderRadius: '6px',
-  background: 'transparent',
-  color: 'inherit',
-  padding: '3px 10px',
-  fontSize: '12px',
-  cursor: 'pointer',
-}
+/** 按钮外观统一由 `.lfs-btn` 承担，组件里不再保留内联按钮样式。 */
 
-/** 收起后的圆钮（层级与卡片同档，见 cardStyle 注释）。 */
+/** 收起后的圆钮（层级与卡片同档，见 cardStyle 注释）；尺寸跟随 FAB_SIZE。 */
 const fabStyle: CSSProperties = {
   position: 'fixed',
   right: '16px',
   bottom: '16px',
   zIndex: 100,
   pointerEvents: 'auto',
-  width: '36px',
-  height: '36px',
-  borderRadius: '50%',
-  border: '1px solid rgba(255, 255, 255, 0.2)',
-  background: 'rgba(32, 33, 36, 0.92)',
-  color: '#e8eaed',
-  fontSize: '16px',
-  cursor: 'pointer',
-  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.35)',
+  width: `${String(FAB_SIZE)}px`,
+  height: `${String(FAB_SIZE)}px`,
 }
 
+/** 状态点配色：跟随主题 token，token 缺失（兼容模式）时退回旧版硬编码色。 */
 function statusColor(state: BrowserFsState): string {
-  if (!state.wsConnected) return '#9aa0a6'
-  if (state.permission === 'granted') return '#34a853'
-  if (state.permission === 'none') return '#9aa0a6'
-  return '#fbbc04'
+  if (!state.wsConnected) return 'var(--dsw-alias-state-idle-primary, #9aa0a6)'
+  if (state.permission === 'granted') return 'var(--dsw-alias-state-success-primary, #34a853)'
+  if (state.permission === 'none') return 'var(--dsw-alias-state-idle-primary, #9aa0a6)'
+  return 'var(--dsw-alias-state-warn-primary, #fbbc04)'
 }
 
 function statusText(state: BrowserFsState, s: Strings): string {
@@ -179,11 +163,22 @@ function statusText(state: BrowserFsState, s: Strings): string {
 /** 圆钮右上角的状态点（与卡片标题行同一配色语义）。 */
 function StatusDot({ color }: { color: string }): ReactElement {
   return (
-    <span style={{
-      position: 'absolute', top: '-1px', right: '-1px',
-      width: '9px', height: '9px', borderRadius: '50%',
-      background: color, border: '1.5px solid rgba(32, 33, 36, 0.92)',
-    }} />
+    <span
+      className="lfs-dot"
+      style={{ position: 'absolute', top: '-1px', right: '-1px', background: color }}
+    />
+  )
+}
+
+/** 圆钮图标：内联 SVG 取代 emoji —— 颜色/线宽跟随主题，跨平台渲染一致。 */
+function FolderIcon(): ReactElement {
+  return (
+    <svg
+      width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
+    >
+      <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2c.7 0 1.36.3 1.83.83l1.1 1.24c.46.53 1.13.83 1.82.83h4.05A2.5 2.5 0 0 1 20 10.4v6.1A2.5 2.5 0 0 1 17.5 19h-12A2.5 2.5 0 0 1 3 16.5z" />
+    </svg>
   )
 }
 
@@ -218,12 +213,6 @@ function humanSize(size: number): string {
   return `${(size / 1024 / 1024).toFixed(1)} MB`
 }
 
-const rowTextStyle: CSSProperties = {
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-}
-
 // ---------- 文件预览层 ----------
 
 /** 预览内容状态机（加载中/各类结果/错误）。 */
@@ -253,12 +242,12 @@ function loadHighlighter(): Promise<HighlightModule> {
   return highlightModulePromise
 }
 
+/** 遮罩：只留定位与布局，配色见 `.lfs-mask`（主题 token + 半透明压暗）。 */
 const previewMaskStyle: CSSProperties = {
   position: 'fixed',
   inset: 0,
   // 预览窗压过卡片/球（100），仍低于 dsh 自身模态（1000）。
   zIndex: 200,
-  background: 'rgba(0, 0, 0, 0.55)',
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -268,6 +257,7 @@ const previewMaskStyle: CSSProperties = {
 const MIN_PREVIEW_WIDTH = 320
 const MIN_PREVIEW_HEIGHT = 200
 
+/** 预览窗：布局/尺寸留在这里，surface/圆角/阴影/字体见 `.lfs-preview`。 */
 const previewCardStyle: CSSProperties = {
   // 窗口形态：默认尺寸不随内容伸缩；flex 列布局，标题栏钉顶、内容区独立滚动。
   // 实际 left/top/width/height 由组件内 win state 控制，这里只保留基础样式。
@@ -277,13 +267,6 @@ const previewCardStyle: CSSProperties = {
   flexDirection: 'column',
   overflow: 'hidden',
   padding: 0,
-  borderRadius: '10px',
-  background: 'rgba(32, 33, 36, 0.98)',
-  color: '#e8eaed',
-  fontSize: '12px',
-  lineHeight: 1.5,
-  boxShadow: '0 4px 16px rgba(0, 0, 0, 0.35)',
-  fontFamily: 'system-ui, sans-serif',
 }
 
 /**
@@ -597,26 +580,24 @@ function FilePreview({ backend, path, onClose, s }: { backend: FsBackend; path: 
     height: `${String(win.height)}px`,
   }
   return createPortal(
-    <div style={previewMaskStyle} onClick={onClose}>
-      <div style={appliedPreviewCardStyle} onClick={(event) => { event.stopPropagation() }}>
+    <div className="lfs-mask" style={previewMaskStyle} onClick={onClose}>
+      <div className="lfs-preview" style={appliedPreviewCardStyle} onClick={(event) => { event.stopPropagation() }}>
         {/* 固定标题栏：文件名（左，过长截断）+ 大小/截断标注（中）+ ✕（右钉住），不随内容滚动。 */}
-        <div style={{
-          flexShrink: 0, padding: '8px 12px',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.12)',
-        }}>
+        <div className="lfs-preview-head">
           <div
-            style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'move', touchAction: 'none', userSelect: 'none' }}
+            className="lfs-preview-handle"
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', touchAction: 'none', userSelect: 'none' }}
             title={s.moveTip}
             onPointerDown={(event) => { startPreviewDrag(event, 'move') }}
           >
-            <strong style={{ ...rowTextStyle, flex: 1, minWidth: 0 }} title={path}>📄 {name}</strong>
+            <strong className="lfs-title lfs-name" style={{ flex: 1, minWidth: 0 }} title={path}>📄 {name}</strong>
             {meta !== '' && (
-              <span style={{ opacity: 0.6, fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0 }}>{meta}</span>
+              <span className="lfs-size" style={{ fontSize: '11px', whiteSpace: 'nowrap', flexShrink: 0 }}>{meta}</span>
             )}
             {editing ? (
               <>
                 <button
-                  style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2, flexShrink: 0 }}
+                  className="lfs-btn lfs-btn--mini"
                   onClick={() => { void save() }}
                   disabled={saving || editLoading || editError !== null}
                   title={s.save}
@@ -624,7 +605,7 @@ function FilePreview({ backend, path, onClose, s }: { backend: FsBackend; path: 
                   {saving ? s.saving : s.save}
                 </button>
                 <button
-                  style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2, flexShrink: 0 }}
+                  className="lfs-btn lfs-btn--mini"
                   onClick={() => {
                     setEditing(false)
                     setEditError(null)
@@ -637,7 +618,7 @@ function FilePreview({ backend, path, onClose, s }: { backend: FsBackend; path: 
               </>
             ) : canEdit && (
               <button
-                style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2, flexShrink: 0 }}
+                className="lfs-btn lfs-btn--mini"
                 onClick={() => { void startEdit() }}
                 title={s.edit}
               >
@@ -645,19 +626,20 @@ function FilePreview({ backend, path, onClose, s }: { backend: FsBackend; path: 
               </button>
             )}
             <button
-              style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2, flexShrink: 0 }}
+              className="lfs-btn lfs-btn--icon"
               onClick={onClose}
               title={s.closeTip}
+              aria-label={s.closeTip}
             >
               ✕
             </button>
           </div>
-          <div style={{ ...rowTextStyle, opacity: 0.6, fontFamily: 'monospace', fontSize: '11px' }} title={path}>
+          <div className="lfs-preview-path lfs-name" title={path}>
             {path}
           </div>
         </div>
         {/* 内容区独立滚动（minHeight:0 让 flex 子项可收缩出滚动条）。 */}
-        <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '10px 12px' }}>
+        <div className="lfs-preview-body">
           {editing ? (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: '8px' }}>
               {editLoading ? (
@@ -977,14 +959,12 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
     const rows: ReactElement[] = []
     for (const entry of level.entries) {
       rows.push(
-        <div key={entry.path} style={{
-          display: 'flex', alignItems: 'center', gap: '4px',
-          paddingLeft: `${String(depth * 12)}px`, paddingTop: '1px', paddingBottom: '1px',
-        }}>
+        <div className="lfs-row" key={entry.path} style={{ paddingLeft: `${String(depth * 12)}px` }}>
           {entry.kind === 'directory'
             ? (
               <span
-                style={{ ...rowTextStyle, cursor: 'pointer', flex: 1 }}
+                className="lfs-name is-dir"
+                style={{ flex: 1 }}
                 onClick={() => { toggleDir(entry.path) }}
                 title={entry.path}
               >
@@ -994,16 +974,18 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
             : (
               <>
                 <span
-                  style={{ ...rowTextStyle, flex: 1, cursor: 'pointer', color: '#8ab4f8' }}
+                  className="lfs-name is-file"
+                  style={{ flex: 1 }}
                   title={s.previewTip(entry.path)}
                   onClick={() => { setPreview(entry.path) }}
                 >
                   📄 {entry.name}
-                  {entry.size !== undefined && <span style={{ opacity: 0.55 }}> {humanSize(entry.size)}</span>}
+                  {entry.size !== undefined && <span className="lfs-size"> {humanSize(entry.size)}</span>}
                 </span>
                 <button
-                  style={{ ...buttonStyle, padding: '0 5px', fontSize: '10px', flexShrink: 0 }}
+                  className="lfs-btn lfs-btn--mini"
                   title={s.copyPathTip(entry.path)}
+                  aria-label={s.copyPathTip(entry.path)}
                   onClick={() => { copyPath(entry.path) }}
                 >
                   {copied === entry.path ? '✓' : s.copyPath}
@@ -1015,7 +997,7 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
       if (entry.kind === 'directory' && expanded.has(entry.path)) {
         if (loading.has(entry.path) && !levels.has(entry.path)) {
           rows.push(
-            <div key={`${entry.path}~loading`} style={{ paddingLeft: `${String((depth + 1) * 12)}px`, opacity: 0.6 }}>
+            <div className="lfs-sub" key={`${entry.path}~loading`} style={{ paddingLeft: `${String((depth + 1) * 12)}px` }}>
               {s.loading}
             </div>,
           )
@@ -1023,7 +1005,7 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
         const error = errors.get(entry.path)
         if (error !== undefined) {
           rows.push(
-            <div key={`${entry.path}~error`} style={{ paddingLeft: `${String((depth + 1) * 12)}px`, color: '#f28b82' }}>
+            <div className="lfs-sub lfs-err" key={`${entry.path}~error`} style={{ paddingLeft: `${String((depth + 1) * 12)}px` }}>
               {error}
             </div>,
           )
@@ -1034,7 +1016,7 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
     const rest = level.total - level.entries.length
     if (rest > 0) {
       rows.push(
-        <div key={`${dirPath}~more`} style={{ paddingLeft: `${String(depth * 12)}px`, opacity: 0.6 }}>
+        <div className="lfs-sub" key={`${dirPath}~more`} style={{ paddingLeft: `${String(depth * 12)}px` }}>
           {s.moreItems(rest)}
         </div>,
       )
@@ -1043,8 +1025,20 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
   }
 
   return (
-    <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.12)', paddingTop: '6px' }}>
-      <div style={{ cursor: 'pointer', userSelect: 'none' }} onClick={toggleSection}>
+    <div className="lfs-tree">
+      <div
+        className="lfs-tree-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={open}
+        onClick={toggleSection}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            toggleSection()
+          }
+        }}
+      >
         {open ? '▾' : '▸'} {s.treeSection}
       </div>
       {open && (
@@ -1053,26 +1047,23 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
             value={searchQuery}
             onChange={(event) => { setSearchQuery(event.target.value) }}
             placeholder={s.searchPlaceholder}
-            style={{
-              width: '100%', boxSizing: 'border-box', marginTop: '4px',
-              background: 'rgba(255,255,255,0.08)',
-              border: '1px solid rgba(255,255,255,0.25)', borderRadius: '6px',
-              color: 'inherit', fontSize: '12px', padding: '2px 6px',
-            }}
+            className="lfs-input"
+            style={{ marginTop: '5px' }}
           />
           {searchQuery.trim() !== '' ? (
-            <div style={{ maxHeight: '160px', overflowY: 'auto', marginTop: '4px' }}>
-              {searching && <div style={{ opacity: 0.6 }}>{s.loading}</div>}
-              {searchError !== null && <div style={{ color: '#f28b82' }}>{searchError}</div>}
+            <div className="lfs-scroll" style={{ maxHeight: '160px' }}>
+              {searching && <div className="lfs-sub">{s.loading}</div>}
+              {searchError !== null && <div className="lfs-sub lfs-err">{searchError}</div>}
               {!searching && searchError === null && searchResults.length === 0 && (
-                <div style={{ opacity: 0.6 }}>{s.searchEmpty}</div>
+                <div className="lfs-sub">{s.searchEmpty}</div>
               )}
               {searchResults.map(entry => (
-                <div key={entry.path} style={{ display: 'flex', alignItems: 'center', gap: '4px', paddingTop: '1px', paddingBottom: '1px' }}>
+                <div className="lfs-row" key={entry.path}>
                   {entry.kind === 'directory'
                     ? (
                       <span
-                        style={{ ...rowTextStyle, flex: 1, cursor: 'pointer' }}
+                        className="lfs-name is-dir"
+                        style={{ flex: 1 }}
                         title={s.searchOpenDirTip(entry.path)}
                         onClick={() => { revealDirectory(entry.path) }}
                       >
@@ -1081,24 +1072,25 @@ function DirTree({ backend, apiRef, s }: { backend: FsBackend; apiRef: { current
                     )
                     : (
                       <span
-                        style={{ ...rowTextStyle, flex: 1, cursor: 'pointer', color: '#8ab4f8' }}
+                        className="lfs-name is-file"
+                        style={{ flex: 1 }}
                         title={s.previewTip(entry.path)}
                         onClick={() => { setPreview(entry.path) }}
                       >
                         📄 {entry.path}
-                        {entry.size !== undefined && <span style={{ opacity: 0.55 }}> {humanSize(entry.size)}</span>}
+                        {entry.size !== undefined && <span className="lfs-size"> {humanSize(entry.size)}</span>}
                       </span>
                     )}
                 </div>
               ))}
               {searchTruncated && !searching && (
-                <div style={{ opacity: 0.6, marginTop: '2px' }}>{s.searchTruncated}</div>
+                <div className="lfs-sub" style={{ marginTop: '2px' }}>{s.searchTruncated}</div>
               )}
             </div>
           ) : (
-            <div style={{ maxHeight: '240px', overflowY: 'auto', marginTop: '4px' }}>
-              {loading.has('') && !levels.has('') && <div style={{ opacity: 0.6 }}>{s.loading}</div>}
-              {errors.has('') && <div style={{ color: '#f28b82' }}>{errors.get('')}</div>}
+            <div className="lfs-scroll" style={{ maxHeight: '240px' }}>
+              {loading.has('') && !levels.has('') && <div className="lfs-sub">{s.loading}</div>}
+              {errors.has('') && <div className="lfs-sub lfs-err">{errors.get('')}</div>}
               {renderLevel('', 0)}
             </div>
           )}
@@ -1120,10 +1112,10 @@ interface CardPos {
 }
 
 /** 卡片位置的 localStorage key（与 device-name/collapsed 同前缀约定）。 */
-const CARD_POS_KEY = 'dsh-browser-fs:card-pos'
+const CARD_POS_KEY = 'dsh-local-file-share:card-pos'
 
 /** 卡片高度记忆 key 与最小高度。 */
-const CARD_HEIGHT_KEY = 'dsh-browser-fs:card-height'
+const CARD_HEIGHT_KEY = 'dsh-local-file-share:card-height'
 const MIN_CARD_HEIGHT = 160
 
 function readStoredCardHeight(): number | null {
@@ -1211,6 +1203,8 @@ function clampAnchorToViewport(pos: CardPos): CardPos {
  * @returns 可注册进 shell.overlay 的函数组件。
  */
 export function createCard(source: CardSource): () => ReactElement {
+  // 视觉层：注入一次（幂等），卡片/圆球/预览窗共用这份样式表。
+  ensureStyles()
   /** DirTree 的清缓存重拉入口（组件挂载时填入，卸载清空）。 */
   const treeApi: { current: DirTreeApi | null } = { current: null }
   return function BrowserFsCard(): ReactElement {
@@ -1445,6 +1439,51 @@ export function createCard(source: CardSource): () => ReactElement {
       cardResizeCleanupRef.current = finish
     }
 
+    /**
+     * 键盘替代拖拽（无障碍 + 精细定位）：方向键移动（Shift 加速），
+     * Enter/Space/Esc 收起。位置与拖拽同一套落盘语义，刷新后保持。
+     */
+    const onHandleKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'Escape') {
+        event.preventDefault()
+        actions.toggleCollapsed()
+        return
+      }
+      const step = event.shiftKey ? 32 : 8
+      const deltas: Record<string, { dx: number; dy: number }> = {
+        ArrowLeft: { dx: -step, dy: 0 },
+        ArrowRight: { dx: step, dy: 0 },
+        ArrowUp: { dx: 0, dy: -step },
+        ArrowDown: { dx: 0, dy: step },
+      }
+      const delta = deltas[event.key]
+      if (delta === undefined) return
+      const el = cardRef.current ?? fabRef.current
+      if (el === null) return
+      const rect = el.getBoundingClientRect()
+      const base = pos ?? { left: rect.left, top: rect.top }
+      event.preventDefault()
+      const next = clampAnchorToViewport({ left: base.left + delta.dx, top: base.top + delta.dy })
+      setPos(next)
+      setPanelFit(prev => (prev === null ? prev : clampPanelToViewport(
+        { left: prev.left + delta.dx, top: prev.top + delta.dy },
+        { width: rect.width, height: rect.height },
+        { width: window.innerWidth, height: window.innerHeight },
+      )))
+      writeStoredCardPos(next, undefined)
+    }
+
+    // Esc 收起卡片：预览窗开着时交给预览窗自己处理（避免一次按键连关两层）。
+    useEffect(() => {
+      const onKey = (event: KeyboardEvent): void => {
+        if (event.key !== 'Escape') return
+        if (document.querySelector('.lfs-mask') !== null) return
+        actions.toggleCollapsed()
+      }
+      window.addEventListener('keydown', onKey)
+      return () => { window.removeEventListener('keydown', onKey) }
+    }, [actions])
+
     if (state.collapsed) {
       // 圆球与卡片共用 pos 锚点：卡片拖到哪儿，收起后球就在哪儿；展开后面板
       // 回到 panelFit 记忆位（未拖过面板则以球位为锚推导，允许翻转）。
@@ -1455,12 +1494,14 @@ export function createCard(source: CardSource): () => ReactElement {
       return createPortal(
         <button
           ref={fabRef}
+          className={`lfs-fab${dragging ? ' is-dragging' : ''}`}
           style={{ ...appliedFabStyle, touchAction: 'none', userSelect: 'none' }}
           title={s.fabTip}
+          aria-label={s.fabTip}
           onClick={() => { actions.toggleCollapsed() }}
           onPointerDown={onHandlePointerDown}
         >
-          📁
+          <FolderIcon />
           <StatusDot color={statusColor(state)} />
         </button>,
         document.body,
@@ -1498,32 +1539,34 @@ export function createCard(source: CardSource): () => ReactElement {
     return createPortal(
       <div
         ref={cardRef}
+        className={`lfs-card${dragging ? ' is-dragging' : ''}`}
         style={appliedCardStyle}
       >
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
         <div
-          style={{
-            display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px',
-            cursor: 'grab', touchAction: 'none', userSelect: 'none',
-          }}
+          className="lfs-head"
+          style={{ touchAction: 'none', userSelect: 'none' }}
           title={s.handleTip}
+          role="button"
+          tabIndex={0}
+          aria-label={s.handleTip}
           onPointerDown={onHandlePointerDown}
+          onDoubleClick={() => { actions.toggleCollapsed() }}
+          onKeyDown={onHandleKeyDown}
         >
-          <span style={{
-            width: '8px', height: '8px', borderRadius: '50%',
-            background: statusColor(state), flexShrink: 0,
-          }} />
-          <strong style={{ flex: 1 }}>{s.cardTitle}</strong>
+          <span className="lfs-dot" style={{ background: statusColor(state) }} />
+          <strong className="lfs-title">{s.cardTitle}</strong>
           <button
-            style={{ ...buttonStyle, padding: '0 7px', lineHeight: 1.2 }}
+            className="lfs-btn lfs-btn--icon"
             onClick={() => { actions.toggleCollapsed() }}
             title={s.collapseTip}
+            aria-label={s.collapseTip}
           >
             —
           </button>
         </div>
-        <div style={{ marginBottom: '4px', opacity: 0.9 }}>{statusText(state, s)}</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginBottom: '8px', opacity: 0.85 }}>
+        <div className="lfs-status" aria-live="polite">{statusText(state, s)}</div>
+        <div className="lfs-device">
           {editingName
             ? (
               <>
@@ -1531,11 +1574,8 @@ export function createCard(source: CardSource): () => ReactElement {
                   autoFocus
                   value={draftName}
                   placeholder={s.namePlaceholder}
-                  style={{
-                    flex: 1, minWidth: 0, background: 'rgba(255,255,255,0.08)',
-                    border: '1px solid rgba(255,255,255,0.25)', borderRadius: '6px',
-                    color: 'inherit', fontSize: '12px', padding: '2px 6px',
-                  }}
+                  className="lfs-input"
+                  style={{ flex: 1 }}
                   onChange={event => { setDraftName(event.target.value) }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') saveName()
@@ -1547,10 +1587,11 @@ export function createCard(source: CardSource): () => ReactElement {
             )
             : (
               <>
-                <span style={{ ...rowTextStyle, flex: 1 }} title={state.label}>{s.localLabel(state.label)}</span>
+                <span className="lfs-name" style={{ flex: 1 }} title={state.label}>{s.localLabel(state.label)}</span>
                 <button
-                  style={{ ...buttonStyle, padding: '0 5px', fontSize: '10px', flexShrink: 0 }}
+                  className="lfs-btn lfs-btn--mini"
                   title={s.editNameTip}
+                  aria-label={s.editNameTip}
                   onClick={() => {
                     setDraftName(state.nickname ?? '')
                     setEditingName(true)
@@ -1561,19 +1602,20 @@ export function createCard(source: CardSource): () => ReactElement {
               </>
             )}
         </div>
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        <div className={`lfs-actions${state.permission === 'granted' ? ' lfs-actions--plain' : ''}${state.busy ? ' is-busy' : ''}`}>
           {state.permission === 'granted'
             ? state.compat
               ? (
                 <>
-                  <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.pickCompatDir() }}>{s.reselectDir}</button>
-                  <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.pickCompatFiles() }}>{s.reselectFiles}</button>
-                  <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.revoke() }}>{s.clear}</button>
+                  <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.pickCompatDir() }}>{s.reselectDir}</button>
+                  <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.pickCompatFiles() }}>{s.reselectFiles}</button>
+                  <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.revoke() }}>{s.clear}</button>
                   {/* 兼容模式缓存即选择时快照，刷新 = 按上次形态重开选择器。 */}
                   <button
-                    style={buttonStyle}
+                    className="lfs-btn lfs-btn--icon"
                     disabled={state.busy}
                     title={s.refreshTipCompat}
+                    aria-label={s.refreshTipCompat}
                     onClick={() => { actions.pickCompatRefresh() }}
                   >
                     ↻
@@ -1582,37 +1624,40 @@ export function createCard(source: CardSource): () => ReactElement {
               )
               : (
                 <>
-                  <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.pickNew() }}>{s.pickNew}</button>
-                  <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.revoke() }}>{s.revoke}</button>
-                  <button style={buttonStyle} title={s.refreshTipFull} onClick={() => { treeApi.current?.refresh() }}>↻</button>
+                  <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.pickNew() }}>{s.pickNew}</button>
+                  <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.revoke() }}>{s.revoke}</button>
+                  <button
+                    className="lfs-btn lfs-btn--icon"
+                    title={s.refreshTipFull}
+                    aria-label={s.refreshTipFull}
+                    onClick={() => { treeApi.current?.refresh() }}
+                  >
+                    ↻
+                  </button>
                 </>
               )
             : state.pickerAvailable
               ? (
                 <>
-                  <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.authorize() }}>
+                  <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.authorize() }}>
                     {state.permission === 'none' ? s.authorize : s.reauthorize}
                   </button>
                   {state.permission !== 'none' && (
-                    <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.pickNew() }}>{s.pickNew}</button>
+                    <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.pickNew() }}>{s.pickNew}</button>
                   )}
                 </>
               )
               : (
                 <>
                   {/* 兼容模式授权区双入口：目录 / 多选文件，不再只靠属性探测自动二选一。 */}
-                  <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.pickCompatDir() }}>{s.compatDir}</button>
-                  <button style={buttonStyle} disabled={state.busy} onClick={() => { actions.pickCompatFiles() }}>{s.compatFiles}</button>
+                  <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.pickCompatDir() }}>{s.compatDir}</button>
+                  <button className="lfs-btn" disabled={state.busy} onClick={() => { actions.pickCompatFiles() }}>{s.compatFiles}</button>
                 </>
               )}
         </div>
         {!state.pickerAvailable && (
-          <div style={{ marginTop: '8px', borderTop: '1px solid rgba(255, 255, 255, 0.12)', paddingTop: '6px', opacity: 0.85 }}>
-            <span style={{
-              display: 'inline-block', padding: '0 6px', borderRadius: '4px',
-              background: 'rgba(251, 188, 4, 0.25)', color: '#fbbc04',
-              fontSize: '10px', marginBottom: '4px',
-            }}>
+          <div className="lfs-compat">
+            <span className="lfs-badge">
               {s.compatBadge}
             </span>
             <div>
@@ -1620,13 +1665,13 @@ export function createCard(source: CardSource): () => ReactElement {
             </div>
             <div style={{ marginTop: '4px' }}>
               {s.compatHowtoFull}
-              <div style={{ marginTop: '2px', fontFamily: 'monospace', fontSize: '11px', opacity: 0.9 }}>
+              <div className="lfs-code" style={{ marginTop: '2px' }}>
                 {s.compatSsh}
               </div>
-              <div style={{ fontFamily: 'monospace', fontSize: '11px', opacity: 0.9 }}>
+              <div className="lfs-code">
                 {s.compatFlag}
               </div>
-              <div style={{ fontFamily: 'monospace', fontSize: '11px', opacity: 0.9 }}>
+              <div className="lfs-code">
                 {s.compatHttps}
               </div>
             </div>
@@ -1636,27 +1681,23 @@ export function createCard(source: CardSource): () => ReactElement {
           <DirTree key={state.rootVersion} backend={state.backend} apiRef={treeApi} s={s} />
         )}
         {state.error !== null && (
-          <div style={{ marginTop: '6px', color: '#f28b82' }}>{state.error}</div>
+          <div className="lfs-err" style={{ marginTop: '6px' }}>{state.error}</div>
         )}
         {state.error !== null && window.self !== window.top && (
           <div style={{ marginTop: '6px' }}>
-            <a href={location.origin} target="_blank" rel="noreferrer" style={{ color: '#8ab4f8' }}>
+            <a className="lfs-link" href={location.origin} target="_blank" rel="noreferrer">
               {s.iframeAuthLink}
             </a>
           </div>
         )}
         </div>
         <div
-          style={{
-            flexShrink: 0, height: '10px', cursor: 'ns-resize',
-            touchAction: 'none', userSelect: 'none',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            borderTop: '1px solid rgba(255,255,255,0.12)',
-          }}
+          className="lfs-resize"
+          style={{ touchAction: 'none', userSelect: 'none' }}
           title={s.cardResizeTip}
           onPointerDown={startCardResize}
         >
-          <span style={{ width: '24px', height: '3px', borderRadius: '2px', background: 'rgba(255,255,255,0.35)' }} />
+          <span />
         </div>
       </div>,
       document.body,

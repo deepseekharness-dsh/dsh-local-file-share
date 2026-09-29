@@ -1,10 +1,10 @@
-# Roadmap — dsh-browser-fs
+# Roadmap — dsh-local-file-share
 
 > 规划备忘，非承诺。变动时同步本文件。
 
 ## 一、图片读取返回 ImageBlock（dsh rc.8 原生视觉）
 
-现状：`browser_fs_read` 只回 UTF-8 文本，图片仅卡片内预览（blob URL），
+现状：`local_file_read` 只回 UTF-8 文本，图片仅卡片内预览（blob URL），
 agent 拿不到图片内容。
 
 dsh 侧能力已就绪（2026-08-19 rc.8）：`deepseek-official` 适配器支持按模型
@@ -15,11 +15,11 @@ dsh 侧能力已就绪（2026-08-19 rc.8）：`deepseek-official` 适配器支�
 
 要做的事：
 
-- `browser_fs_read` 增加图片分支：MIME 为准入四类时，文本帧之外回传
+- `local_file_read` 增加图片分支：MIME 为准入四类时，文本帧之外回传
   ImageBlock（data URL 或附件引用，按 dsh 工具结果契约来）
 - 尺寸治理：超附件准入限制时先压缩/缩略再回传，或明确报错指引用预览
 - 兼容模式（input[webkitdirectory] 的 File 快照）同路径支持，读 slice
-- 场景闭环：手机拍报错截图 → agent `browser_fs_read` 读图 → DeepSeek
+- 场景闭环：手机拍报错截图 → agent `local_file_read` 读图 → DeepSeek
   原生视觉排障
 
 ## 二、设置卡片（dsh rc.7+ 插件设置页）

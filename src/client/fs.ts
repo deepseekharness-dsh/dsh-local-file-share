@@ -1,7 +1,7 @@
 /**
  * File System Access 执行器：在浏览器里对授权根目录执行 list/read/write。
  * 所有 path 一律相对授权根目录，拒绝 `..` 逃逸。
- * @module dsh-browser-fs/client/fs
+ * @module dsh-local-file-share/client/fs
  */
 
 import type { FsOp } from '../wire.js'

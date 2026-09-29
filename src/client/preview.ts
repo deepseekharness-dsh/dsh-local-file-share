@@ -2,7 +2,7 @@
  * 文件轻量预览的纯函数与常量：按扩展名分图片/文本，图片走 blob URL，
  * 文本只取前 64KB UTF-8 解码，解码后含 NUL 视为二进制。
  * 两模式共用（完整模式句柄 / 兼容模式 File 映射都能给出 Blob）。
- * @module dsh-browser-fs/client/preview
+ * @module dsh-local-file-share/client/preview
  */
 
 /** 可按 <img> 预览的图片扩展名（小写，不含点）。 */

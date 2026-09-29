@@ -1,6 +1,7 @@
 MIT License
 
 Copyright (c) 2026 whitefirer
+Copyright (c) 2026 dsh-local-file-share contributors (fork modifications)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +20,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## 出处说明 / Provenance
+
+`dsh-local-file-share`（本地文件共享）是
+[`dsh-browser-fs`](https://github.com/whitefirer/dsh-browser-fs)（作者 whitefirer，MIT）的
+衍生版本。上游的协议设计、host/client 双半结构、File System Access 后端、语法高亮
+chunk、兼容模式选择器与多设备 roster 均来自上游，本仓库在此之上做了：
+
+- 品牌与包名更名（`dsh-browser-fs` → `dsh-local-file-share`）；
+- 悬浮卡片视觉层重做（新增 `src/client/styles.ts`，全面改用 dsh 主题 token，浅色/
+  深色跟随，补 hover/focus/动效/滚动条/减少动效降级）；
+- 交互补齐（双击收起、Esc 收起、方向键移动卡片、`aria-live` 状态播报、键盘可达）；
+- WS 升级的浏览器会话校验（复用 `connection.requestRejection`）。
+
+原始版权与许可声明保留在本文件与源码头部注释中。按 MIT 条款，本衍生版本同样以 MIT 发布。

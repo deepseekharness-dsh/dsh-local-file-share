@@ -1,10 +1,10 @@
 /**
  * IndexedDB 句柄持久化（最小封装）：FileSystemDirectoryHandle 是结构化可克隆
  * 对象，直接入库；启动时读回后由调用方做 queryPermission 检查。
- * @module dsh-browser-fs/client/store
+ * @module dsh-local-file-share/client/store
  */
 
-const DB_NAME = 'dsh-browser-fs'
+const DB_NAME = 'dsh-local-file-share'
 const STORE = 'handles'
 const KEY = 'root'
 

@@ -2,7 +2,7 @@
  * 最小 i18n：中/英字典 + 语言信号读取跟随，不引第三方库。
  * 信号源：dsh web 的 UI 语言体现在 <html lang> 上（实测 zh-CN）；插件启动读一次，
  * 并用 MutationObserver 跟随其变化。<html lang> 缺失时退回 navigator.language。
- * @module dsh-browser-fs/client/i18n
+ * @module dsh-local-file-share/client/i18n
  */
 
 /** 支持的语言。 */
@@ -107,7 +107,7 @@ const zh: Strings = {
   statusDenied: '目录权限被拒绝',
   statusGrantElsewhere: whom => `当前授权在设备：${whom}`,
   statusNone: '未授权目录',
-  cardTitle: 'browser-fs 浏览器文件',
+  cardTitle: '本地文件共享',
   collapseTip: '收起',
   fabTip: '点击展开 · 按住可拖动',
   handleTip: '拖拽移动卡片',
@@ -169,7 +169,7 @@ const en: Strings = {
   statusDenied: 'Directory permission denied',
   statusGrantElsewhere: whom => `Authorization lives on: ${whom}`,
   statusNone: 'No directory authorized',
-  cardTitle: 'browser-fs Browser Files',
+  cardTitle: 'Local File Share',
   collapseTip: 'Collapse',
   fabTip: 'Click to expand · hold to drag',
   handleTip: 'Drag to move card',

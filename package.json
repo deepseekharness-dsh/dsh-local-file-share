@@ -1,27 +1,54 @@
 {
-  "name": "dsh-browser-fs",
-  "version": "0.2.0",
-  "description": "dsh plugin: let the agent list/read/write files inside a browser-authorized local directory (File System Access API) through a WebSocket relay",
+  "name": "dsh-local-file-share",
+  "version": "0.3.0",
+  "description": "Local File Share / 本地文件共享 — let the dsh agent list, read and write files on the machine that runs your browser, through a private WebSocket relay and the File System Access API. Zero data copied onto the dsh host.",
   "type": "module",
   "main": "lib/index.js",
   "license": "MIT",
+  "author": "OWNER",
+  "icon": "./icon.svg",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "local-file-share",
+    "file-system-access",
+    "browser-files",
+    "local-files",
+    "websocket",
+    "agent",
+    "remote-development"
+  ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/whitefirer/dsh-browser-fs.git"
+    "url": "git+https://github.com/OWNER/dsh-local-file-share.git"
+  },
+  "homepage": "https://github.com/OWNER/dsh-local-file-share#readme",
+  "bugs": {
+    "url": "https://github.com/OWNER/dsh-local-file-share/issues"
   },
   "publishConfig": {
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "exports": {
     ".": "./lib/index.js",
     "./client": "./lib/client.js",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "lib",
+    "locale",
     "cordis.patch.yml",
+    "icon.svg",
     "README.md",
-    "README_EN.md"
+    "README_EN.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -38,7 +65,8 @@
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
-    "prepublishOnly": "npm run build"
+    "verify": "npm run build && npm run typecheck && npm run smoke",
+    "prepublishOnly": "npm run verify"
   },
   "dependencies": {
     "highlight.js": "^11.12.0",

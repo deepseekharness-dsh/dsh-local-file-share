@@ -2,7 +2,7 @@
  * 展开面板的视口钳位纯逻辑（DOM 无关，smoke 可断言）：以悬浮球位置为锚，
  * 优先翻转展开方向（球在右/下半屏就向左/上展开），翻转仍不够再 clamp
  * 进边距。只决定展开面板的显示位置，不改球的记忆位置。
- * @module dsh-browser-fs/client/panel-fit
+ * @module dsh-local-file-share/client/panel-fit
  */
 
 /** fixed 定位点（left/top，px）。 */
@@ -18,7 +18,7 @@ export interface Size {
 }
 
 /** 悬浮球边长（px），翻转时对齐球缘用。 */
-export const FAB_SIZE = 36
+export const FAB_SIZE = 40
 
 /** 展开面板与视口边缘的最小间距（px）。 */
 export const PANEL_MARGIN = 10

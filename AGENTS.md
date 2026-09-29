@@ -1,4 +1,4 @@
-# AGENTS.md — dsh-browser-fs
+# AGENTS.md — dsh-local-file-share
 
 > 用户面文档看 README.md / README_EN.md；本文件写给改代码的人/agent。
 > 未来规划（图片 ImageBlock、设置卡片）见 `docs/roadmap.md`。
@@ -8,8 +8,8 @@
 让 dsh 的 agent 读写**浏览器所在机器**的本地文件。双面插件：
 
 - **host 半**（`src/index.ts`，dsh 宿主 Node 进程）：
-  `ctx.webServer.registerUpgrade` 起精确路径 `/browser-fs/ws` 的 WebSocket；
-  `ctx.tools.register` 注册 `browser_fs_list/read/write` 三个模型工具；
+  `ctx.webServer.registerUpgrade` 起精确路径 `/local-file-share/ws` 的 WebSocket；
+  `ctx.tools.register` 注册 `local_file_list/read/write` 三个模型工具；
   工具调用按 `rpcId` 配对收发帧，`exec.signal` 接 abort（同时发 cancel 帧）。
 - **client 半**（`src/client/`，浏览器）：启动从 IndexedDB 读回目录句柄
   `queryPermission`；连回 host WS（断线指数退避重连）；收到 call 帧用
@@ -44,13 +44,31 @@ workflow 会校验 tag 与版本号一致，不符直接失败。手动兜底：
 | `index.ts` | client 入口、WS 重连、帧分发 |
 | `fs.ts` | File System Access 操作实现（list/read/write） |
 | `store.ts` | IndexedDB 句柄存取 |
-| `ui.tsx` | 浮动卡片（preact） |
+| `ui.tsx` | 浮动卡片 / 目录树 / 预览窗（React JSX） |
+| `styles.ts` | 主题化样式层：注入式样式表 + `lfs-` 类名体系（唯一改视觉的地方） |
 | `preview.ts` | 文件预览（图片/文本/代码高亮） |
 | `highlight.ts` | 代码着色 |
 | `compat-picker.ts` | 无 File System Access API 环境的降级选择器 |
 | `device.ts` / `i18n.ts` | 设备判定 / 跟随 dsh 语言的中英文案 |
 | `panel-fit.ts` | 悬浮面板定位防出界 |
 | `files-backend.ts` | 后端抽象 |
+
+## 品牌约定（改名后必须遵守）
+
+- 包名 / 插件行 id：`dsh-local-file-share` / `local-file-share`；显示名：**本地文件共享** / **Local File Share**；
+- 模型工具：`local_file_list` / `local_file_read` / `local_file_write`；WS 路径 `/local-file-share/ws`；
+- CSS 类名统一 `lfs-` 前缀；localStorage / IndexedDB 键统一 `dsh-local-file-share:` 前缀；
+- **不要**再出现 `browser-fs` / `browser_fs_` / `dbfs-` 等旧名（LICENSE、CHANGELOG 里作为
+  上游出处说明除外）。改动后自查：
+  `grep -rn "browser_fs_\|dbfs-\|/browser-fs/" src scripts build.mjs cordis.patch.yml package.json`。
+
+## 视觉改动的规矩
+
+- 视觉只写在 `src/client/styles.ts`；组件里挂 `className`，内联 style 只留布局/定位/尺寸；
+- 颜色一律走 `--dsw-alias-*` token 并带 fallback（`var(--dsw-alias-x, 回退值)`），保证
+  token 缺失的兼容模式也可读；
+- 新增交互要照顾键盘与 `prefers-reduced-motion`；验证方式：`npm run verify` +
+  页面实测（无浏览器控制时明确说明该限制）。
 
 ## 关键坑（踩过）
 
@@ -68,5 +86,14 @@ workflow 会校验 tag 与版本号一致，不符直接失败。手动兜底：
 
 ## 发布
 
-已收录进 awesome-dsh-plugin（徽章见 README）。发版：build → commit（含 lib/）→
-push github → 按需打 tag。
+完整清单见 [`docs/publishing.md`](docs/publishing.md)（npm / GitHub / Gitee / awesome-dsh-plugin 收录）。
+要点：改版本号 → `npm run verify` → commit（含 `lib/`）→ push → 打同号 tag 触发 CI 发布。
+本仓库**尚未**被 awesome-dsh-plugin 收录，收录要往那个仓库提 PR（一条 entry）。
+
+## 来历
+
+本仓库是 [`dsh-browser-fs`](https://github.com/whitefirer/dsh-browser-fs)（whitefirer，MIT）的衍生版：
+上游提供 WS 中继协议、双半结构、File System Access 后端、兼容模式选择器与多设备 roster；
+本版本做了更名、主题化视觉层、交互/可达性补强与 WS 会话校验加固。
+同步上游改动时优先 `git remote add upstream https://github.com/whitefirer/dsh-browser-fs.git`
+再 `git fetch upstream` 挑选合并，注意别把旧品牌名带回来。

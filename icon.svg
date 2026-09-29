@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Local File Share">
+  <defs>
+    <linearGradient id="lfs-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2f7de1"/>
+      <stop offset="1" stop-color="#1b4fa8"/>
+    </linearGradient>
+    <linearGradient id="lfs-fold" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#d8e6fb"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角底板 -->
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#lfs-bg)"/>
+
+  <!-- 文件夹 -->
+  <path d="M13 22a5 5 0 0 1 5-5h7.4c1.5 0 2.9.65 3.86 1.78l1.5 1.72c.97 1.13 2.37 1.78 3.87 1.78H46a5 5 0 0 1 5 5v14a5 5 0 0 1-5 5H18a5 5 0 0 1-5-5z"
+        fill="url(#lfs-fold)" opacity="0.96"/>
+
+  <!-- 共享连线：两个节点 + 中间链路 -->
+  <path d="M25 33.5h14" stroke="#1b4fa8" stroke-width="2.4" stroke-linecap="round" opacity="0.75"/>
+  <circle cx="22" cy="33.5" r="4.2" fill="#2f7de1" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="42" cy="33.5" r="4.2" fill="#2f7de1" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="32" cy="33.5" r="3" fill="#1b4fa8"/>
+</svg>

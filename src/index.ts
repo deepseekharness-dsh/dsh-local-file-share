@@ -1,16 +1,16 @@
 /**
- * dsh-browser-fs host 半（跑在 dsh 宿主的 Node 进程里）：
+ * dsh-local-file-share host 半（跑在 dsh 宿主的 Node 进程里）：
  *
  *  - 在 ctx.webServer 上注册一条精确 pathname 的 upgrade 路由（默认
- *    /browser-fs/ws），自建 WebSocket 通道通向浏览器标签页；
- *  - 在 ctx.tools 上注册 browser_fs_list / browser_fs_read / browser_fs_write
+ *    /local-file-share/ws），自建 WebSocket 通道通向浏览器标签页；
+ *  - 在 ctx.tools 上注册 local_file_list / local_file_read / local_file_write
  *    三个模型工具，execute 把调用帧发给"持有授权句柄"的标签页并等待结果帧；
  *  - 多个标签在线时只挑声明了 hasHandle 的连接（wire 协议选执行者）；
  *    无连接 / 无授权时 execute 立即抛出明确错误（registry 转成错误结果）。
  *
  * 升级请求不过 /api 信任栅栏，handler 里自做同源校验：Host 必须存在，
  * Origin 存在时其 authority 必须等于 Host（缺 Origin 放行，非浏览器客户端）。
- * @module dsh-browser-fs
+ * @module dsh-local-file-share
  */
 
 import { randomUUID } from 'node:crypto'
@@ -29,14 +29,14 @@ import {
 } from './wire.js'
 
 /** cordis 函数插件名。 */
-export const name = 'browser-fs'
+export const name = 'local-file-share'
 
 /** 宿主侧必需服务：WS 路由 + 工具注册表。 */
 export const inject = ['webServer', 'tools']
 
 /** 插件配置（cordis.patch.yml 行内 config，未提供 schema 时原样透传）。 */
 export interface Config {
-  /** WS 通道的精确 pathname；默认 /browser-fs/ws。 */
+  /** WS 通道的精确 pathname；默认 /local-file-share/ws。 */
   wsPath?: string
   /** 一次浏览器调用的超时毫秒数；默认 120000。 */
   requestTimeoutMs?: number
@@ -45,6 +45,8 @@ export interface Config {
 /** apply 实际读到的宿主侧 ctx 面（结构声明；cordis 注入的真实 ctx 兼容它）。 */
 interface HostContext {
   effect(fn: () => void | (() => void) | (() => Promise<void>), label?: string): void
+  /** 可选服务读取（connection 在非 web 组合里缺失）。 */
+  get(name: string): unknown
   webServer: {
     register(route: {
       kind: 'exact' | 'prefix'
@@ -107,15 +109,21 @@ function isSameOrigin(req: IncomingMessage): boolean {
   }
 }
 
-/** 拒绝一条不受信的 upgrade：协议协商前直接回 403 并关 socket。 */
-function rejectWebSocketUpgrade(socket: Duplex): void {
+/**
+ * 拒绝一条不受信的 upgrade：协议协商前直接回 `status` 并关 socket。
+ * @param socket - 原始 TCP 流。
+ * @param status - 401（未带会话）或 403（同源/信任校验不过）；默认 403。
+ */
+function rejectWebSocketUpgrade(socket: Duplex, status: 401 | 403 = 403): void {
+  const phrase = status === 401 ? 'Unauthorized' : 'Forbidden'
+  const body = status === 401 ? 'unauthorized' : 'forbidden'
   socket.end([
-    'HTTP/1.1 403 Forbidden',
+    `HTTP/1.1 ${String(status)} ${phrase}`,
     'Connection: close',
     'Content-Type: text/plain; charset=utf-8',
-    'Content-Length: 9',
+    `Content-Length: ${String(Buffer.byteLength(body))}`,
     '',
-    'forbidden',
+    body,
   ].join('\r\n'))
 }
 
@@ -155,11 +163,11 @@ class BrowserRelay {
     if (conn === undefined) {
       if (this.conns.size === 0) {
         return Promise.reject(new Error(
-          'browser-fs: dsh 页面未在任何设备打开（这些工具操作的是浏览器所在机器的本地文件，需要一个在线标签页）',
+          'local-file-share: dsh 页面未在任何设备打开（这些工具操作的是浏览器所在机器的本地文件，需要一个在线标签页）',
         ))
       }
       return Promise.reject(new Error(
-        'browser-fs: 没有设备持有授权目录（请在 dsh 页面的 browser-fs 卡片里授权）',
+        'local-file-share: 没有设备持有授权目录（请在 dsh 页面的 local-file-share 卡片里授权）',
       ))
     }
     const device = conn.label === '' ? '未命名设备' : conn.label
@@ -172,11 +180,11 @@ class BrowserRelay {
         } catch {
           // 连接已断：取消帧无处可去，drop 路径已完成清理。
         }
-        reject(new Error('browser-fs: call aborted by caller'))
+        reject(new Error('local-file-share: call aborted by caller'))
       }
       const timer = setTimeout(() => {
         if (this.settle(rpcId) === undefined) return
-        reject(new Error(`browser-fs: 设备「${device}」未在 ${String(this.requestTimeoutMs)}ms 内响应`))
+        reject(new Error(`local-file-share: 设备「${device}」未在 ${String(this.requestTimeoutMs)}ms 内响应`))
       }, this.requestTimeoutMs)
       this.pending.set(rpcId, { conn, signal, onAbort, resolve, reject, timer })
       if (signal.aborted) {
@@ -208,7 +216,7 @@ class BrowserRelay {
   async close(): Promise<void> {
     for (const conn of this.conns) conn.ws.terminate()
     for (const rpcId of [...this.pending.keys()]) {
-      this.settle(rpcId)?.reject(new Error('browser-fs: plugin disposed'))
+      this.settle(rpcId)?.reject(new Error('local-file-share: plugin disposed'))
     }
     await new Promise<void>((resolve) => {
       this.server.close(() => { resolve() })
@@ -236,7 +244,7 @@ class BrowserRelay {
       if (entry === undefined || entry.conn !== conn) return
       const device = conn.label === '' ? '未命名设备' : conn.label
       if (frame.ok) entry.resolve(frame.value)
-      else entry.reject(new Error(`${frame.error ?? 'browser-fs: browser-side call failed'}（设备：${device}）`))
+      else entry.reject(new Error(`${frame.error ?? 'local-file-share: browser-side call failed'}（设备：${device}）`))
     })
     const drop = (): void => {
       this.conns.delete(conn)
@@ -244,7 +252,7 @@ class BrowserRelay {
         const entry = this.pending.get(rpcId)
         if (entry === undefined || entry.conn !== conn) continue
         const device = conn.label === '' ? '未命名设备' : conn.label
-        this.settle(rpcId)?.reject(new Error(`browser-fs: 设备「${device}」的标签页在调用中途断开`))
+        this.settle(rpcId)?.reject(new Error(`local-file-share: 设备「${device}」的标签页在调用中途断开`))
       }
       this.broadcastRoster()
     }
@@ -286,7 +294,7 @@ class BrowserRelay {
 
   private send(conn: Conn, frame: CallFrame | { type: 'cancel'; rpcId: string }): void {
     if (conn.ws.readyState !== WebSocket.OPEN) {
-      throw new Error('browser-fs: browser tab websocket is not open')
+      throw new Error('local-file-share: browser tab websocket is not open')
     }
     conn.ws.send(JSON.stringify(frame), (error) => {
       // 发送失败由 close/error 事件路径统一回收 pending。
@@ -369,9 +377,20 @@ export function apply(ctx: HostContext, config?: Config): void {
         rejectWebSocketUpgrade(socket)
         return
       }
+      // 会话校验：dsh 的 index 路由有浏览器鉴权，WS 路由需要自己补一道——
+      // 复用 connection.requestRejection（Host/Origin 信任 + 浏览器 cookie）。
+      // connection 缺失（非 web 组合）时跳过，不影响无头部署。
+      const connection = ctx.get('connection') as
+        | { requestRejection?: (request: IncomingMessage) => 401 | 403 | undefined }
+        | undefined
+      const rejection = connection?.requestRejection?.(req)
+      if (rejection !== undefined) {
+        rejectWebSocketUpgrade(socket, rejection)
+        return
+      }
       relay.handleUpgrade(req, socket, head)
     },
-  }), 'browser-fs: ws upgrade route')
+  }), 'local-file-share: ws upgrade route')
 
   // 同路径的 exact HTTP 行：非 upgrade 的 GET 回 426（路由存在性的显式信号，
   // 避免落到 SPA fallback）。
@@ -382,7 +401,7 @@ export function apply(ctx: HostContext, config?: Config): void {
       res.writeHead(426, { connection: 'Upgrade', upgrade: 'websocket' })
       res.end('upgrade required')
     },
-  }), 'browser-fs: ws probe route')
+  }), 'local-file-share: ws probe route')
 
   // 语法高亮懒加载 chunk（与 WS 通道同目录的 highlight.mjs）：client 半预览
   // 首次命中已映射语言时动态 import。随插件包分发，启动时读一次驻内存；
@@ -405,13 +424,13 @@ export function apply(ctx: HostContext, config?: Config): void {
         })
         res.end(body)
       },
-    }), 'browser-fs: highlight module route')
+    }), 'local-file-share: highlight module route')
   }
 
-  ctx.effect(() => () => relay.close(), 'browser-fs: relay teardown')
+  ctx.effect(() => () => relay.close(), 'local-file-share: relay teardown')
 
   ctx.effect(() => ctx.tools.register(defineTool<ListArgs, ListValue>({
-    name: 'browser_fs_list',
+    name: 'local_file_list',
     description: 'List files and directories inside the local directory the user authorized in the dsh web page.'
       + NOT_HOST_FS
       + ' `path` is relative to the authorized root (omit for the root itself).'
@@ -460,10 +479,10 @@ export function apply(ctx: HostContext, config?: Config): void {
       }, exec.signal)
       return { ...(outcome.value as Omit<ListValue, 'device'>), device: outcome.device }
     },
-  })), 'browser-fs: browser_fs_list')
+  })), 'local-file-share: local_file_list')
 
   ctx.effect(() => ctx.tools.register(defineTool<ReadArgs, ReadValue>({
-    name: 'browser_fs_read',
+    name: 'local_file_read',
     description: 'Read a UTF-8 text file from the local directory the user authorized in the dsh web page.'
       + NOT_HOST_FS
       + ' `path` is relative to the authorized root.'
@@ -496,10 +515,10 @@ export function apply(ctx: HostContext, config?: Config): void {
       }, exec.signal)
       return { ...(outcome.value as Omit<ReadValue, 'device'>), device: outcome.device }
     },
-  })), 'browser-fs: browser_fs_read')
+  })), 'local-file-share: local_file_read')
 
   ctx.effect(() => ctx.tools.register(defineTool<WriteArgs, WriteValue>({
-    name: 'browser_fs_write',
+    name: 'local_file_write',
     description: 'Write a UTF-8 text file into the local directory the user authorized in the dsh web page.'
       + NOT_HOST_FS
       + ' `path` is relative to the authorized root; parent directories are created automatically.'
@@ -524,5 +543,5 @@ export function apply(ctx: HostContext, config?: Config): void {
       const outcome = await relay.call('write', { path: args.path, content: args.content }, exec.signal)
       return { ...(outcome.value as Omit<WriteValue, 'device'>), device: outcome.device }
     },
-  })), 'browser-fs: browser_fs_write')
+  })), 'local-file-share: local_file_write')
 }

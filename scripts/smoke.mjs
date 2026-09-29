@@ -17,11 +17,15 @@ const tools = new Map()
 const httpRoutes = new Map()
 let upgradeHandler = null
 const disposers = []
+/** 会话校验桩：置为 { requestRejection } 时模拟 web 组合下的 connection 服务。 */
+let connectionStub
 const ctx = {
   effect(fn) {
     const dispose = fn()
     if (typeof dispose === 'function') disposers.push(dispose)
   },
+  // 非 web 组合没有 connection 服务：宿主半的会话校验必须优雅跳过。
+  get(name) { return name === 'connection' ? connectionStub : undefined },
   webServer: {
     register(route) { httpRoutes.set(route.path, route); return () => {} },
     registerUpgrade(route) { upgradeHandler = route.handler; return () => {} },
@@ -30,7 +34,7 @@ const ctx = {
     register(def) { tools.set(def.name, def); return () => {} },
   },
 }
-plugin.apply(ctx, { wsPath: '/browser-fs/ws', requestTimeoutMs: 3000 })
+plugin.apply(ctx, { wsPath: '/local-file-share/ws', requestTimeoutMs: 3000 })
 
 const server = createServer((req, res) => {
   const route = httpRoutes.get(new URL(req.url ?? '/', 'http://x').pathname)
@@ -43,7 +47,7 @@ const server = createServer((req, res) => {
 server.on('upgrade', (req, socket, head) => { upgradeHandler(req, socket, head) })
 await new Promise(resolve => { server.listen(0, '127.0.0.1', resolve) })
 const port = server.address().port
-const wsUrl = `ws://127.0.0.1:${String(port)}/browser-fs/ws`
+const wsUrl = `ws://127.0.0.1:${String(port)}/local-file-share/ws`
 const origin = { headers: { Origin: `http://127.0.0.1:${String(port)}` } }
 
 let failures = 0
@@ -52,10 +56,10 @@ const check = (name, cond) => {
   if (!cond) failures++
 }
 
-check('three tools registered', ['browser_fs_list', 'browser_fs_read', 'browser_fs_write'].every(n => tools.has(n)))
+check('three tools registered', ['local_file_list', 'local_file_read', 'local_file_write'].every(n => tools.has(n)))
 
 // 语法高亮懒加载 chunk 的静态路由（host 半注册 exact HTTP 行供给 lib/highlight.mjs）
-const hlRes = await fetch(`http://127.0.0.1:${String(port)}/browser-fs/highlight.mjs`)
+const hlRes = await fetch(`http://127.0.0.1:${String(port)}/local-file-share/highlight.mjs`)
 const hlBody = await hlRes.text()
 check('highlight module route', hlRes.status === 200
   && (hlRes.headers.get('content-type') ?? '').includes('javascript')
@@ -64,13 +68,13 @@ check('highlight module route', hlRes.status === 200
 const exec = { signal: new AbortController().signal }
 
 // 1. 无标签页：立即明确报错
-await tools.get('browser_fs_list').execute({}, exec).then(
+await tools.get('local_file_list').execute({}, exec).then(
   () => check('no-tab error', false),
   (e) => check('no-tab error', e.message.includes('dsh 页面未在任何设备打开')),
 )
 
 // 2. defineTool 参数校验：read 缺 path
-await tools.get('browser_fs_read').execute({}, exec).then(
+await tools.get('local_file_read').execute({}, exec).then(
   () => check('args validation', false),
   (e) => check('args validation', e.message.includes('invalid arguments')),
 )
@@ -107,18 +111,18 @@ check('roster broadcast', rosterSeen.length >= 2
   && rosterSeen.at(-1)[0].label === LABEL
   && rosterSeen.at(-1)[0].dirName === 'fake-root')
 
-const list = await tools.get('browser_fs_list').execute({}, exec)
+const list = await tools.get('local_file_list').execute({}, exec)
 check('list round-trip', list.entries?.[0]?.path === 'a.txt' && list.device === LABEL)
-const read = await tools.get('browser_fs_read').execute({ path: 'a.txt' }, exec)
+const read = await tools.get('local_file_read').execute({ path: 'a.txt' }, exec)
 check('read round-trip', read.content === 'abc' && read.device === LABEL)
-const written = await tools.get('browser_fs_write').execute({ path: 'b.txt', content: 'abc' }, exec)
+const written = await tools.get('local_file_write').execute({ path: 'b.txt', content: 'abc' }, exec)
 check('write round-trip', written.bytes === 3 && written.device === LABEL)
-console.log('render:', JSON.stringify(tools.get('browser_fs_write').output.render({ path: 'b.txt' }, written)[0].text))
+console.log('render:', JSON.stringify(tools.get('local_file_write').output.render({ path: 'b.txt' }, written)[0].text))
 
 // 4. 无持句柄标签：明确报错（先广播 hasHandle:false）
 browser.send(JSON.stringify({ type: 'state', hasHandle: false, dirName: null, label: LABEL }))
 await new Promise(resolve => setTimeout(resolve, 100))
-await tools.get('browser_fs_list').execute({}, exec).then(
+await tools.get('local_file_list').execute({}, exec).then(
   () => check('no-handle error', false),
   (e) => check('no-handle error', e.message.includes('没有设备持有授权目录')),
 )
@@ -127,7 +131,7 @@ check('roster empties on revoke', rosterSeen.at(-1).length === 0)
 // 5. 断连错误：恢复可执行状态后掐线；错误文本带设备标签
 browser.send(JSON.stringify({ type: 'state', hasHandle: true, dirName: 'fake-root', label: LABEL }))
 await new Promise(resolve => setTimeout(resolve, 100))
-const dangling = tools.get('browser_fs_list').execute({}, exec)
+const dangling = tools.get('local_file_list').execute({}, exec)
 browser.removeAllListeners('message') // 不再应答
 browser.terminate()
 await dangling.then(
@@ -145,6 +149,15 @@ await new Promise((resolve) => {
   evil.once('open', () => { check('cross-origin rejected', false); evil.close(); resolve() })
   evil.once('error', (e) => { check('cross-origin rejected', e.message.includes('403')); resolve() })
 })
+
+// 6b. 同源但浏览器会话校验不过 → 401（connection.requestRejection 返回 401 时）
+connectionStub = { requestRejection: () => 401 }
+const noSession = new WebSocket(wsUrl, { headers: { Origin: `http://127.0.0.1:${String(port)}` } })
+await new Promise((resolve) => {
+  noSession.once('open', () => { check('no-session upgrade rejected', false); noSession.close(); resolve() })
+  noSession.once('error', (e) => { check('no-session upgrade rejected', e.message.includes('401')); resolve() })
+})
+connectionStub = undefined
 
 // 7. 兼容模式降级路径（headless）：esbuild 现场编译 files-backend/device/preview/
 // compat-picker，用 Node 的全局 File 模拟 input 选中的文件列表（showDirectoryPicker
@@ -188,7 +201,7 @@ await new Promise((resolve) => {
     previewKindFor,
   } = await import(previewUrl.href)
   const { classifyCompatChange, resolveCompatInput } = await import(pickerUrl.href)
-  const { clampPanelToViewport, fitPanelToViewport } = await import(panelFitUrl.href)
+  const { FAB_SIZE, clampPanelToViewport, fitPanelToViewport } = await import(panelFitUrl.href)
   const i18nUrl = new URL(`file://${join(out, '..', 'compat-out', 'i18n.js')}`)
   const { STRINGS, langFromTag } = await import(i18nUrl.href)
 
@@ -208,10 +221,10 @@ await new Promise((resolve) => {
     const panel = { width: 340, height: 300 }
     // 桌面 1200x800：球在右半屏 → 向左展开（面板右缘对齐球右缘），不 clamp
     const flipX = fitPanelToViewport({ left: 1000, top: 100 }, panel, { width: 1200, height: 800 })
-    check('panel fit flip left', flipX.left === 1000 + 36 - 340 && flipX.top === 100)
+    check('panel fit flip left', flipX.left === 1000 + FAB_SIZE - 340 && flipX.top === 100)
     // 球在下半屏 → 向上展开（底缘对齐球底缘）
     const flipY = fitPanelToViewport({ left: 100, top: 700 }, panel, { width: 1200, height: 800 })
-    check('panel fit flip up', flipY.top === 700 + 36 - 300 && flipY.left === 100)
+    check('panel fit flip up', flipY.top === 700 + FAB_SIZE - 300 && flipY.left === 100)
     // 移动端 390x844：球贴右边缘，翻转仍不够 → clamp 进边距，整面板可见
     const mobile = fitPanelToViewport({ left: 350, top: 780 }, panel, { width: 390, height: 844 })
     check('panel fit mobile clamp', mobile.left >= 10 && mobile.left + panel.width <= 380

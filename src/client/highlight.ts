@@ -1,9 +1,9 @@
 /**
  * 语法高亮懒加载 chunk（独立构建产物 lib/highlight.mjs，host 半经
- * /browser-fs/highlight.mjs 路由供给，预览首次命中已映射语言时才被
+ * /local-file-share/highlight.mjs 路由供给，预览首次命中已映射语言时才被
  * 动态 import）：highlight.js 核心 + 常用语言子集（非全量，控制体积）+
  * GitHub Dark 主题 CSS（文本内联，加载时注入 <style>）。
- * @module dsh-browser-fs/client/highlight
+ * @module dsh-local-file-share/client/highlight
  */
 
 import hljs from 'highlight.js/lib/core'
