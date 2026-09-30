@@ -27,7 +27,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, ReactElement } from 'react'
-import { DEFAULT_HIGHLIGHT_PATH, type RosterExecutor } from '../wire.js'
+import { DEFAULT_HIGHLIGHT_PATH, type RosterExecutor, type SharePolicy } from '../wire.js'
 import type { FsBackend } from './fs.js'
 import { STRINGS, type Lang, type Strings } from './i18n.js'
 import { FAB_SIZE, clampPanelToViewport, fitPanelToViewport } from './panel-fit.js'
@@ -71,6 +71,8 @@ export interface BrowserFsState {
   compat: boolean
   /** 当前 UI 语言（跟随 dsh 页面的 <html lang>）。 */
   lang: Lang
+  /** 当前共享策略（共享范围 + 读写权限）。 */
+  policy: SharePolicy
 }
 
 /** 卡片动作（授权必须经过用户手势，全部挂按钮点击）。 */
@@ -83,6 +85,8 @@ export interface CardActions {
   revoke(): void
   /** 收起成圆钮 / 展开回卡片。 */
   toggleCollapsed(): void
+  /** 保存共享策略（共享范围 + 读写权限），即时生效并广播给 host。 */
+  setPolicy(policy: SharePolicy): void
   /** 设置设备昵称（空串清除，回落 UA 派生）。 */
   setDeviceName(name: string): void
   /** 兼容模式：选目录（webkitdirectory；有失效前科时自动退多选）。 */
@@ -180,6 +184,79 @@ function FolderIcon(): ReactElement {
       <path d="M3 7.5A2.5 2.5 0 0 1 5.5 5h3.2c.7 0 1.36.3 1.83.83l1.1 1.24c.46.53 1.13.83 1.82.83h4.05A2.5 2.5 0 0 1 20 10.4v6.1A2.5 2.5 0 0 1 17.5 19h-12A2.5 2.5 0 0 1 3 16.5z" />
     </svg>
   )
+}
+
+// ---------- 共享范围：会话列表 ----------
+
+/** `useSessions` 契约里本文件用到的最小面（SessionListState 的宽松视图）。 */
+interface SessionListLike {
+  ids?: unknown
+  byId?: unknown
+}
+
+/** 一行会话（共享范围列表用）。 */
+interface SessionRow {
+  id: string
+  title: string
+  short: string
+  running: boolean
+  subagent: boolean
+}
+
+const EMPTY_SESSION_ROWS: readonly SessionRow[] = []
+
+/** 会话短显示：`session-1a2b3c4d…` → `1a2b3c4d`。 */
+function shortSession(id: string): string {
+  const trimmed = id.startsWith('session-') ? id.slice('session-'.length) : id
+  return trimmed.length > 8 ? trimmed.slice(0, 8) : trimmed
+}
+
+/**
+ * 把 `SessionListState` 投影成列表行：标题优先 `displayTitle`，其次 `title`，最后 id；
+ * `origin === 'subagent'` 或带 `parentId` 的标为子代理（提醒用户白名单不自动覆盖它们）。
+ * @param snapshot - `useSessions` 选出的列表快照。
+ * @returns 列表行（无快照时为空数组）。
+ */
+function sessionRows(snapshot: SessionListLike | null | undefined): readonly SessionRow[] {
+  if (snapshot === null || snapshot === undefined) return EMPTY_SESSION_ROWS
+  const ids = Array.isArray(snapshot.ids) ? snapshot.ids : []
+  const byId = (typeof snapshot.byId === 'object' && snapshot.byId !== null ? snapshot.byId : {}) as Record<string, {
+    displayTitle?: unknown
+    title?: unknown
+    running?: unknown
+    parentId?: unknown
+    origin?: unknown
+  }>
+  const rows: SessionRow[] = []
+  for (const rawId of ids) {
+    if (typeof rawId !== 'string') continue
+    const row = byId[rawId]
+    const title = typeof row?.displayTitle === 'string' && row.displayTitle !== ''
+      ? row.displayTitle
+      : (typeof row?.title === 'string' && row.title !== '' ? row.title : rawId)
+    rows.push({
+      id: rawId,
+      title,
+      short: shortSession(rawId),
+      running: row?.running === true,
+      subagent: row?.origin === 'subagent' || typeof row?.parentId === 'string',
+    })
+  }
+  return rows
+}
+
+/**
+ * 订阅会话列表。`shell.overlay` 的标准 props 里恒有 `useSessions`（见槽位目录），
+ * 但为兼容缺失该 hook 的上下文，这里做了存在性判断 —— 同一槽位内该判断稳定，
+ * 因此 hooks 调用顺序不会变化。选择器返回快照本身（引用稳定），避免每次渲染新数组。
+ * @param props - 槽位注入的 props。
+ * @returns 会话列表行。
+ */
+function useSessionRows(props: unknown): readonly SessionRow[] {
+  const hook = (props as { useSessions?: unknown } | null | undefined)?.useSessions
+  if (typeof hook !== 'function') return EMPTY_SESSION_ROWS
+  const snapshot = (hook as (selector: (state: SessionListLike) => SessionListLike) => SessionListLike)(state => state)
+  return sessionRows(snapshot)
 }
 
 // ---------- 目录内容树 ----------
@@ -1202,16 +1279,29 @@ function clampAnchorToViewport(pos: CardPos): CardPos {
  * @param source - 状态源与动作。
  * @returns 可注册进 shell.overlay 的函数组件。
  */
-export function createCard(source: CardSource): () => ReactElement {
+export function createCard(source: CardSource): (props: unknown) => ReactElement {
   // 视觉层：注入一次（幂等），卡片/圆球/预览窗共用这份样式表。
   ensureStyles()
   /** DirTree 的清缓存重拉入口（组件挂载时填入，卸载清空）。 */
   const treeApi: { current: DirTreeApi | null } = { current: null }
-  return function BrowserFsCard(): ReactElement {
+  return function BrowserFsCard(props: unknown): ReactElement {
     const state = useSyncExternalStore(source.subscribe, source.getSnapshot)
     const { actions } = source
-    /** 当前语言的字典（跟随 dsh 的 <html lang>）。 */
+    /** 会话列表（共享范围用；来自 shell.overlay 标准 props 的 useSessions）。 */
+    const sessionList = useSessionRows(props)
+    /** 当前语言字典（跟随 dsh 的 <html lang>）。 */
     const s = STRINGS[state.lang]
+    /** 已选入白名单的会话集合（策略不可变，派生集合每次渲染重建即可）。 */
+    const selectedSessions = new Set(state.policy.sessions)
+    const toggleSession = (id: string): void => {
+      const next = new Set(selectedSessions)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      actions.setPolicy({ ...state.policy, scope: 'sessions', sessions: [...next] })
+    }
+    const policyIsDefault = state.policy.scope === 'global' && state.policy.access === 'readwrite'
+    const policySummary = `${state.policy.access === 'readonly' ? s.accessReadonly : s.accessReadwrite}`
+      + `${state.policy.scope === 'global' ? ` · ${s.policyGlobal}` : ` · ${s.policySessions(state.policy.sessions.length)}`}`
     const [editingName, setEditingName] = useState(false)
     const [draftName, setDraftName] = useState('')
     /** 启动时的本地记忆（只读一次）：anchor = 球位，panel = 面板记忆位。 */
@@ -1556,6 +1646,12 @@ export function createCard(source: CardSource): () => ReactElement {
         >
           <span className="lfs-dot" style={{ background: statusColor(state) }} />
           <strong className="lfs-title">{s.cardTitle}</strong>
+          <span
+            className={`lfs-chip${policyIsDefault ? '' : ' is-warn'}`}
+            title={`${s.scopeLabel}: ${policySummary}`}
+          >
+            {policySummary}
+          </span>
           <button
             className="lfs-btn lfs-btn--icon"
             onClick={() => { actions.toggleCollapsed() }}
@@ -1655,6 +1751,96 @@ export function createCard(source: CardSource): () => ReactElement {
                 </>
               )}
         </div>
+        {/* 共享范围与权限：默认「全局 + 读写」（= 旧版行为），改这里即时生效并广播给 host */}
+        <div className="lfs-policy">
+          <div className="lfs-policy-row">
+            <span className="lfs-policy-label">{s.scopeLabel}</span>
+            <div className="lfs-seg" role="radiogroup" aria-label={s.scopeLabel}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={state.policy.scope === 'global'}
+                onClick={() => { actions.setPolicy({ ...state.policy, scope: 'global', sessions: [] }) }}
+              >
+                {s.scopeGlobal}
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={state.policy.scope === 'sessions'}
+                onClick={() => { actions.setPolicy({ ...state.policy, scope: 'sessions' }) }}
+              >
+                {s.scopeSessions}
+              </button>
+            </div>
+          </div>
+          <div className="lfs-policy-row">
+            <span className="lfs-policy-label">{s.accessLabel}</span>
+            <div className="lfs-seg" role="radiogroup" aria-label={s.accessLabel}>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={state.policy.access === 'readwrite'}
+                onClick={() => { actions.setPolicy({ ...state.policy, access: 'readwrite' }) }}
+              >
+                {s.accessReadwrite}
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={state.policy.access === 'readonly'}
+                onClick={() => { actions.setPolicy({ ...state.policy, access: 'readonly' }) }}
+              >
+                {s.accessReadonly}
+              </button>
+            </div>
+          </div>
+          {state.policy.access === 'readonly' && (
+            <div className="lfs-sub">{s.readonlyHint}</div>
+          )}
+          {state.policy.scope === 'sessions' && (
+            <div className="lfs-sessions">
+              <div className="lfs-sessions-head">
+                <span style={{ flex: 1 }}>{s.sessionPickHint}</span>
+                <button
+                  type="button"
+                  className="lfs-btn lfs-btn--mini"
+                  onClick={() => { actions.setPolicy({ ...state.policy, scope: 'sessions', sessions: sessionList.map(row => row.id) }) }}
+                >
+                  {s.sessionSelectAll}
+                </button>
+                <button
+                  type="button"
+                  className="lfs-btn lfs-btn--mini"
+                  onClick={() => { actions.setPolicy({ ...state.policy, scope: 'sessions', sessions: [] }) }}
+                >
+                  {s.sessionClearAll}
+                </button>
+              </div>
+              <div className="lfs-scroll lfs-sessions-list">
+                {sessionList.length === 0
+                  ? <div className="lfs-sub">{s.sessionEmpty}</div>
+                  : sessionList.map(row => (
+                    <label className={`lfs-row lfs-session${selectedSessions.has(row.id) ? '' : ' is-off'}`} key={row.id}>
+                      <input
+                        type="checkbox"
+                        checked={selectedSessions.has(row.id)}
+                        onChange={() => { toggleSession(row.id) }}
+                      />
+                      <span className="lfs-name lfs-session-title" title={row.id}>{row.title}</span>
+                      {row.running && <span className="lfs-running" aria-hidden="true" />}
+                      <span className="lfs-size">
+                        {row.short}{row.subagent ? ` · ${s.subagentTag}` : ''}{row.running ? ` · ${s.runningTag}` : ''}
+                      </span>
+                    </label>
+                  ))}
+              </div>
+              {selectedSessions.size === 0 && (
+                <div className="lfs-sub lfs-err">{s.sessionNoneWarn}</div>
+              )}
+            </div>
+          )}
+        </div>
         {!state.pickerAvailable && (
           <div className="lfs-compat">
             <span className="lfs-badge">
@@ -1701,6 +1887,40 @@ export function createCard(source: CardSource): () => ReactElement {
         </div>
       </div>,
       document.body,
+    )
+  }
+}
+
+/**
+ * 会话内小条（注册进 `conversation.input.dock`，作用域 = session）。
+ *
+ * 为什么需要它：根作用域的卡片拿不到"当前会话是谁"（`shell.overlay` 的 props 里
+ * 没有 sessionId），而会话作用域的槽位有 —— 所以把这个"一键加入/移出本会话"
+ * 的补丁交给会话内小条，两者用同一个数据源与同一套 action。
+ * 只在「指定会话」模式下渲染，默认（全局）不占任何视觉空间。
+ * @param source - 与卡片相同的数据源。
+ * @returns 会话作用域组件（不在该模式时返回 null）。
+ */
+export function createSessionChip(source: CardSource): (props: unknown) => ReactElement | null {
+  return function SessionScopeChip(props: unknown): ReactElement | null {
+    const state = useSyncExternalStore(source.subscribe, source.getSnapshot)
+    const s = STRINGS[state.lang]
+    const sessionId = (props as { sessionId?: unknown } | null | undefined)?.sessionId
+    if (state.policy.scope !== 'sessions' || typeof sessionId !== 'string' || sessionId === '') return null
+    const included = state.policy.sessions.includes(sessionId)
+    const toggle = (): void => {
+      const next = new Set(state.policy.sessions)
+      if (included) next.delete(sessionId)
+      else next.add(sessionId)
+      source.actions.setPolicy({ ...state.policy, scope: 'sessions', sessions: [...next] })
+    }
+    return (
+      <div className={`lfs-chipbar${included ? '' : ' is-off'}`}>
+        <span>{included ? s.chipIncluded : s.chipExcluded}</span>
+        <button type="button" title={s.chipToggleTip} aria-pressed={included} onClick={toggle}>
+          {included ? s.chipRemove : s.chipAdd}
+        </button>
+      </div>
     )
   }
 }

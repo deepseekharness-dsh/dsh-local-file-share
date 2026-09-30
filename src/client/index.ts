@@ -15,14 +15,26 @@
  * @module dsh-local-file-share/client
  */
 
-import { DEFAULT_WS_PATH, parseHostFrame, type ResultFrame, type RosterExecutor } from '../wire.js'
+import {
+  DEFAULT_SHARE_POLICY,
+  DEFAULT_WS_PATH,
+  decidePolicy,
+  normalizeSharePolicy,
+  parseHostFrame,
+  type FsOp,
+  type PolicyDenial,
+  type ResultFrame,
+  type RosterExecutor,
+  type SharePolicy,
+} from '../wire.js'
 import { classifyCompatChange, resolveCompatInput, type CompatPickMode } from './compat-picker.js'
 import { deriveDeviceLabel } from './device.js'
 import { STRINGS, detectLang, langFromTag, subscribeLang } from './i18n.js'
 import { executeOp, handleBackend, type FsBackend } from './fs.js'
 import { createFilesBackend } from './files-backend.js'
+import { clearStoredPolicy, readStoredPolicy, writeStoredPolicy } from './policy.js'
 import { clearHandle, loadHandle, saveHandle } from './store.js'
-import { createCard, type BrowserFsState } from './ui.js'
+import { createCard, createSessionChip, type BrowserFsState } from './ui.js'
 
 /** 必需服务：slot 注册表（授权卡片挂 shell.overlay）。 */
 export const inject = ['slots']
@@ -42,6 +54,49 @@ interface ClientCtx {
 interface LocaleFace {
   getSnapshot(): { active: string }
   subscribe(fn: () => void): () => void
+}
+
+/** 会话 id 的短显示形式（错误文案里避免刷屏）。 */
+function shortSessionId(caller: string | undefined): string {
+  if (caller === undefined || caller === '') return '（非会话调用）'
+  return caller.length > 18 ? `${caller.slice(0, 15)}…` : caller
+}
+
+/**
+ * 本地拦截（L2）时的人类可读原因：与 host 侧（L3）保持同一套说法，
+ * 用户看到任一条都能直接照着去卡片里改策略。
+ * @param denial - 判定给出的拒绝原因。
+ * @param op - 本次操作。
+ * @param caller - 调用方会话 id。
+ * @returns 工具结果里的错误文本。
+ */
+function describeDenial(denial: PolicyDenial | undefined, op: FsOp, caller: string | undefined): string {
+  if (denial === 'readonly') {
+    return 'local-file-share: 当前授权为「只读」，已拒绝写入'
+      + '（在「本地文件共享」卡片的「权限」里切换为「读写」后重试）'
+  }
+  if (denial === 'out-of-scope') {
+    return `local-file-share: 当前授权限定「指定会话」，本会话 ${shortSessionId(caller)} 不在共享范围内`
+      + '（在卡片「共享范围」里加入本会话，或改为「全局」共享）'
+  }
+  return 'local-file-share: 当前授权限定「指定会话」，而本次调用不来自任何会话'
+    + `（op=${op}）—— 请改为「全局」共享，或从会话内发起调用`
+}
+
+/**
+ * 浏览器侧错误的人话化：以只读方式授权的目录在被写入时会抛
+ * `NotAllowedError`/`SecurityError`，这里补上"怎么改"的指引；其余原样透传。
+ * @param error - executeOp 抛出的原始错误。
+ * @returns 错误文本。
+ */
+function browserErrorText(error: unknown): string {
+  const name = error instanceof DOMException ? error.name : ''
+  const message = error instanceof Error ? error.message : String(error)
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return 'local-file-share: 该目录以「只读」方式授权，浏览器拒绝了写入'
+      + `（在卡片「权限」里切到「读写」并重新授权目录）—— 原始错误：${message}`
+  }
+  return message
 }
 
 /**
@@ -96,6 +151,7 @@ export function apply(ctx: ClientCtx): void {
     pickerAvailable,
     compat: false,
     lang: detectLang(),
+    policy: readStoredPolicy(),
   }
   const listeners = new Set<() => void>()
   const setState = (patch: Partial<BrowserFsState>): void => {
@@ -130,7 +186,7 @@ export function apply(ctx: ClientCtx): void {
   /** 只有「后端在手 + readwrite 已授予」才算可执行（兼容模式后端即授即 granted）。 */
   const ready = (): boolean => backend !== null && state.permission === 'granted'
 
-  /** 向 host 广播当前授权状态 + 设备标签（host 据此挑执行者并维护 roster）。 */
+  /** 向 host 广播当前授权状态 + 设备标签 + 共享策略（host 据此挑执行者并维护 roster）。 */
   const sendState = (): void => {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
@@ -138,6 +194,7 @@ export function apply(ctx: ClientCtx): void {
         hasHandle: ready(),
         dirName: ready() ? state.dirName : null,
         label: state.label,
+        policy: state.policy,
       }))
     }
   }
@@ -146,9 +203,28 @@ export function apply(ctx: ClientCtx): void {
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame))
   }
 
-  const onCall = async (rpcId: string, op: 'list' | 'read' | 'write', args: Record<string, unknown>): Promise<void> => {
+  /**
+   * 执行一次 host 派发的调用。**L2 本地二次拦截**：本机自己就是策略的持有者，
+   * 因此这里用帧里带来的 `caller` 完整判定一次（只读拒写、白名单拒外会话都在
+   * 到达 File System Access 之前挡掉）；host 侧（L3）是另一道权威判定。
+   * @param rpcId - 调用标识。
+   * @param op - 文件操作。
+   * @param args - 操作参数。
+   * @param caller - 调用方会话 id（host 注入；缺失 = 非会话调用者）。
+   */
+  const onCall = async (
+    rpcId: string,
+    op: 'list' | 'read' | 'write',
+    args: Record<string, unknown>,
+    caller?: string,
+  ): Promise<void> => {
     if (backend === null || !ready()) {
       reply({ type: 'result', rpcId, ok: false, error: 'local-file-share: this tab holds no authorized directory' })
+      return
+    }
+    const decision = decidePolicy(state.policy, caller, op)
+    if (!decision.allowed) {
+      reply({ type: 'result', rpcId, ok: false, error: describeDenial(decision.denial, op, caller) })
       return
     }
     const abort = new AbortController()
@@ -161,7 +237,7 @@ export function apply(ctx: ClientCtx): void {
         type: 'result',
         rpcId,
         ok: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: browserErrorText(error),
       })
     } finally {
       inflight.delete(rpcId)
@@ -179,7 +255,7 @@ export function apply(ctx: ClientCtx): void {
       inflight.get(frame.rpcId)?.abort()
       return
     }
-    void onCall(frame.rpcId, frame.op, frame.args)
+    void onCall(frame.rpcId, frame.op, frame.args, frame.caller)
   }
 
   const connect = (): void => {
@@ -305,8 +381,9 @@ export function apply(ctx: ClientCtx): void {
   const isMobileLike = /Android|HarmonyOS|iPhone|iPad/i.test(navigator.userAgent)
 
   /** 完整模式选择器统一入口：reuse=true 优先复用已授权句柄（authorize），
-   *  false 强制新选（pickNew）。 */
-  const runFullModePicker = async (reuse: boolean): Promise<void> => {
+   *  false 强制新选（pickNew）。`mode` 跟随当前「权限」设置 —— 选「只读」时
+   *  用 `mode: 'read'` 让浏览器**根本不给写权限**（这是最强的一道，L1）。 */
+  const runFullModePicker = async (reuse: boolean, mode: 'readwrite' | 'read'): Promise<void> => {
     const blocker = envBlocker()
     if (blocker !== null) {
       setState({ error: blocker })
@@ -315,11 +392,11 @@ export function apply(ctx: ClientCtx): void {
     setState({ busy: true, error: null })
     try {
       if (reuse && handle !== null) {
-        const permission = await handle.requestPermission({ mode: 'readwrite' })
+        const permission = await handle.requestPermission({ mode })
         setState({ permission, dirName: handle.name })
       } else {
-        console.log('[local-file-share] showDirectoryPicker 调用')
-        const picked = await showDirectoryPicker({ mode: 'readwrite' })
+        console.log('[local-file-share] showDirectoryPicker 调用, mode =', mode)
+        const picked = await showDirectoryPicker({ mode })
         console.log('[local-file-share] 目录已选:', picked.name)
         setHandle(picked)
         await saveHandle(picked)
@@ -348,14 +425,21 @@ export function apply(ctx: ClientCtx): void {
         openCompatPicker('directory')
         return
       }
-      void runFullModePicker(true)
+      void runFullModePicker(true, state.policy.access === 'readonly' ? 'read' : 'readwrite')
     },
     pickNew(): void {
       if (!pickerAvailable) {
         openCompatPicker('directory')
         return
       }
-      void runFullModePicker(false)
+      void runFullModePicker(false, state.policy.access === 'readonly' ? 'read' : 'readwrite')
+    },
+    /** 保存共享策略：归一化 → 落盘 → 刷新快照 → 重新广播（host 据此改判定）。 */
+    setPolicy(next: SharePolicy): void {
+      const policy = normalizeSharePolicy(next)
+      writeStoredPolicy(policy)
+      setState({ policy })
+      sendState()
     },
     revoke(): void {
       void (async () => {
@@ -363,7 +447,9 @@ export function apply(ctx: ClientCtx): void {
         backend = null
         setState({ backend: null })
         if (pickerAvailable) await clearHandle()
-        setState({ permission: 'none', dirName: null, error: null, compat: false })
+        // 策略随授权生命周期：解除授权即清除，下次授权回到默认（全局 + 读写）。
+        clearStoredPolicy()
+        setState({ permission: 'none', dirName: null, error: null, compat: false, policy: DEFAULT_SHARE_POLICY })
         sendState()
       })()
     },
@@ -405,14 +491,17 @@ export function apply(ctx: ClientCtx): void {
     },
   }
 
-  const card = createCard({
-    subscribe(listener) {
+  /** 卡片与会话内小条共用的数据源（同一份状态与同一套 action）。 */
+  const cardSource = {
+    subscribe(listener: () => void) {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
     },
     getSnapshot: () => state,
     actions,
-  })
+  }
+  const card = createCard(cardSource)
+  const sessionChip = createSessionChip(cardSource)
 
   ctx.effect(() => {
     connect()
@@ -460,4 +549,18 @@ export function apply(ctx: ClientCtx): void {
     })
     return () => { dispose?.() }
   }, 'local-file-share: overlay card')
+
+  // 会话作用域小条：它拿得到 sessionId，补上根卡片"不知道当前会话"的缺口；
+  // 只在「指定会话」模式下渲染，默认全局模式完全不可见。
+  ctx.effect(() => {
+    let dispose: (() => void) | undefined
+    ctx.slots.inject('conversation.input.dock', () => {
+      dispose = ctx.slots.register(
+        { name: 'conversation.input.dock', id: 'local-file-share-session', order: 40 },
+        sessionChip,
+      )
+      return dispose
+    })
+    return () => { dispose?.() }
+  }, 'local-file-share: session scope chip')
 }

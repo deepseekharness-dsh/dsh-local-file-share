@@ -17,7 +17,7 @@ const STYLE_ID = 'dsh-local-file-share-style'
 /** 注入的完整样式表。 */
 const CARD_CSS = `
 /* ---------- 基础 ---------- */
-.lfs-card, .lfs-fab, .lfs-mask, .lfs-preview {
+.lfs-card, .lfs-fab, .lfs-mask, .lfs-preview, .lfs-chipbar {
   --lfs-surface: var(--dsw-alias-bg-overlay, rgba(32, 33, 36, 0.94));
   --lfs-surface-2: var(--dsw-alias-bg-layer-2, rgba(255, 255, 255, 0.06));
   --lfs-border: var(--dsw-alias-border-l1, rgba(255, 255, 255, 0.14));
@@ -368,6 +368,121 @@ const CARD_CSS = `
   background: var(--lfs-border-strong);
   background-clip: content-box;
 }
+
+/* ---------- 共享范围与权限 ---------- */
+.lfs-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border: 1px solid var(--lfs-border);
+  border-radius: 999px;
+  background: var(--lfs-surface-2);
+  color: var(--lfs-text-dim);
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.lfs-chip.is-warn {
+  border-color: color-mix(in srgb, var(--lfs-warn) 45%, transparent);
+  background: color-mix(in srgb, var(--lfs-warn) 16%, transparent);
+  color: var(--lfs-warn);
+}
+.lfs-policy {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid var(--lfs-border);
+}
+.lfs-policy-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.lfs-policy-label {
+  flex: 0 0 58px;
+  color: var(--lfs-text-dim);
+  font-size: 11.5px;
+}
+.lfs-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--lfs-border);
+  border-radius: 9px;
+  background: var(--lfs-surface-2);
+}
+.lfs-seg > button {
+  min-height: 20px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lfs-text-dim);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background-color 0.14s var(--lfs-ease), color 0.14s var(--lfs-ease);
+}
+.lfs-seg > button:hover { color: var(--lfs-text); }
+.lfs-seg > button[aria-checked="true"] {
+  background: var(--lfs-brand);
+  color: var(--dsw-alias-bg-base, #101114);
+  font-weight: 600;
+}
+.lfs-seg > button:focus-visible { outline: 2px solid var(--lfs-brand); outline-offset: 1px; }
+.lfs-sessions { margin: 2px 0 6px; }
+.lfs-sessions-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  color: var(--lfs-text-dim);
+  font-size: 11px;
+}
+.lfs-sessions-list { max-height: 156px; }
+.lfs-session { cursor: pointer; }
+.lfs-session input {
+  margin: 0 2px 0 0;
+  accent-color: var(--lfs-brand);
+}
+.lfs-session .lfs-session-title { flex: 1; }
+.lfs-running {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-success-primary, #34a853);
+}
+/* 会话内小条（注册在 conversation.input.dock，仅"指定会话"模式下出现） */
+.lfs-chipbar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--lfs-border);
+  border-radius: 999px;
+  background: var(--lfs-surface);
+  color: var(--lfs-text-dim);
+  font-size: 11.5px;
+  box-shadow: 0 4px 12px -6px rgba(0, 0, 0, 0.35);
+}
+.lfs-chipbar.is-off {
+  border-color: color-mix(in srgb, var(--lfs-warn) 45%, transparent);
+  color: var(--lfs-warn);
+}
+.lfs-chipbar > button {
+  border: 1px solid var(--lfs-border-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+.lfs-chipbar > button:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+.lfs-chipbar > button:focus-visible { outline: 2px solid var(--lfs-brand); outline-offset: 1px; }
 
 /* ---------- 动效降级 ---------- */
 @media (prefers-reduced-motion: reduce) {

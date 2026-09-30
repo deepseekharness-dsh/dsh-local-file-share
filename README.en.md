@@ -116,6 +116,37 @@ see the orb in the bottom-right corner.
 All three descriptions state plainly that they operate on **the browser machine's local disk, not the
 dsh host**. With several devices holding handles, results name the executing device.
 
+## Share scope and access
+
+The default is **global sharing + read/write** (identical to 1.0.0 when left untouched). To tighten it,
+edit it right on the card:
+
+| Setting | Values | Meaning |
+|---|---|---|
+| Share scope | **Global** (default) | Every session in this dsh instance may use the three tools |
+| | **Selected sessions** | Only the sessions ticked in the list may; the badge in the title row shows the current scope |
+| Access | **Read/write** (default) | list, read and write |
+| | **Read-only** | list and read only; every write is refused |
+
+Key points:
+
+- **Enforced in three layers**, not merely hinted in the UI: (1) with read-only the authorization asks for
+  `mode: 'read'`, so the browser never grants write access at all; (2) the client refuses write frames by
+  policy before touching the File System Access API; (3) the host — the single authority — does not
+  dispatch a call that the policy forbids, and answers with an error that says what to change.
+- **Changes take effect immediately**: the policy lives in your browser
+  (`localStorage['dsh-local-file-share:share-policy']`) and travels in the state frame; the host keeps no
+  state and a restart does not lose it. **Revoking the authorization clears the policy too** (the next
+  authorization starts from the default).
+- **Subagents and team members** have their own session ids and are **not** covered automatically by a
+  selected-session scope; the list marks them, tick them by hand or stay on *Global*.
+- **Non-session callers** (a call not originating from any session) are refused under a selected-session
+  scope, with an error explaining how to allow them.
+- **In-session chip**: once you switch to *Selected sessions*, a small chip above the composer of every
+  session offers one-click "add/remove this session" — the root card cannot know which session is current,
+  the chip can. It stays hidden in global mode.
+- Upgrading to 1.1.0 needs **no re-authorization**.
+
 ## Security model
 
 - **Scope**: only the directory you selected (and its subtree) is reachable; paths outside it are not.

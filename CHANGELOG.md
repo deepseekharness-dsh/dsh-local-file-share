@@ -3,6 +3,40 @@
 本文件记录 `dsh-local-file-share`（本地文件共享）的全部变更。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.0] — 2026-09-30
+
+### Added
+
+- **共享范围（scope）**：一次授权可以限定给「指定会话」白名单，默认仍是`全局`。
+  卡片新增「共享范围」区块（全局 / 指定会话 + 会话复选列表 + 全选/清空），
+  会话列表来自 `shell.overlay` 标准 props 的 `useSessions`。
+- **会话内小条**：注册在 `conversation.input.dock`（session 作用域）的小条提供
+  「加入本会话 / 移出本会话」—— 根作用域的卡片拿不到当前会话 id，两者互补；
+  只在「指定会话」模式下渲染。
+- **读写权限（access）**：`读写` / `只读` 可配置，默认`读写`。三层强制：
+  L1 选「只读」时用 `showDirectoryPicker({ mode: read })` 让浏览器根本不给写权限；
+  L2 客户端收到 write 帧时按策略直接拒绝（不碰 File System Access）；
+  L3 host 侧不满足策略**不派发**并返回可操作错误（唯一权威）。
+- **策略随授权走**：存在浏览器 `localStorage[dsh-local-file-share:share-policy]`，
+  启动即随 `state` 帧上报；解除授权时一并清除。host 侧无状态，重启不丢。
+- **错误分档**：无授权 / 被白名单挡 / 只读拒写三类错误各带"去哪改"的指引；
+  工具描述里也补了策略提示，减少模型无效重试。
+- 单测：策略归一化与判定矩阵（含非会话调用者）、协议向后兼容；smoke 新增
+  只读拒写、白名单拒外会话、旧客户端缺省兼容、roster 策略摘要等用例。
+
+### Changed
+
+- `StateFrame` 新增可选 `policy`；`CallFrame` 新增可选 `caller` 与 `policy.access`；
+  `RosterExecutor` 新增 `scope`/`access`。解析保持"宽松 + 缺省即默认"，
+  1.0.0 客户端连新 host 行为不变（默认全局 + 读写）。
+- 客户端选择器按当前权限选择 `mode`：`只读` → `read`，`读写` → `readwrite`。
+
+### Notes
+
+- 升级到 1.1.0 **无需重新授权**（句柄键不变；策略键缺省即默认）。
+- 白名单**不自动覆盖子代理/团队成员**（它们的会话 id 不同）；卡片列表里子代理会标注，
+  需要时手动勾选，或直接用「全局」。
+
 ## [1.0.0] — 2026-09-29
 
 首个公开发布版（**Local File Share / 本地文件共享**，上游 `dsh-browser-fs@0.2.0` 的衍生版）：

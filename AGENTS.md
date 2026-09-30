@@ -47,6 +47,7 @@ npm run smoke       # scripts/smoke.mjs
 | `index.ts` | client 入口、WS 重连、帧分发 |
 | `fs.ts` | File System Access 操作实现（list/read/write） |
 | `store.ts` | IndexedDB 句柄存取 |
+| `policy.ts` | 共享策略（范围/权限）的 localStorage 存取，启动即读 |
 | `ui.tsx` | 浮动卡片 / 目录树 / 预览窗（React JSX） |
 | `styles.ts` | 主题化样式层：注入式样式表 + `lfs-` 类名体系（唯一改视觉的地方） |
 | `preview.ts` | 文件预览（图片/文本/代码高亮） |
@@ -64,6 +65,16 @@ npm run smoke       # scripts/smoke.mjs
 - **不要**再出现 `browser-fs` / `browser_fs_` / `dbfs-` 等旧名（LICENSE、CHANGELOG 里作为
   上游出处说明除外）。改动后自查：
   `grep -rn "browser_fs_\|dbfs-\|/browser-fs/" src scripts build.mjs cordis.patch.yml package.json`。
+
+## 共享策略（v1.1.0）
+
+- 策略 = `{ scope: global|sessions, sessions: string[], access: readwrite|readonly }`，
+  **判定函数只有一份**：`src/wire.ts` 的 `decidePolicy`（host 派发与客户端拦截共用），
+  归一化只有一份：`normalizeSharePolicy`（缺省即默认，非法值回落）。
+- 新增/改动策略字段时，三处必须同步：`wire.ts`（类型 + 解析）、host 的 `noExecutorError`（错误分档文案）、
+  客户端 `describeDenial`（同一套说法），并补 `test/plugin.test.mjs` 的矩阵用例。
+- host 侧判定是**唯一权威**；客户端拦截是体验（早拒 + 精确文案），不能作为安全边界。
+- 会话内小条（`createSessionChip`）与根卡片共用同一 `cardSource`，不要各建一份状态。
 
 ## 视觉改动的规矩
 

@@ -159,6 +159,69 @@ await new Promise((resolve) => {
 })
 connectionStub = undefined
 
+// 7. 共享策略：只读授权拒绝写入、放行读取
+const holder = new WebSocket(wsUrl, origin)
+const holderFrames = []
+holder.on('message', (data) => {
+  const frame = JSON.parse(data.toString())
+  holderFrames.push(frame)
+  if (frame.type !== 'call') return
+  const value = frame.op === 'list'
+    ? { entries: [{ path: 'a.txt', kind: 'file', size: 3 }], truncated: false }
+    : frame.op === 'read'
+      ? { content: 'abc', size: 3, truncated: false }
+      : { path: frame.args.path, bytes: 3 }
+  holder.send(JSON.stringify({ type: 'result', rpcId: frame.rpcId, ok: true, value }))
+})
+await new Promise((resolve, reject) => { holder.once('open', resolve); holder.once('error', reject) })
+holder.send(JSON.stringify({ type: 'state', hasHandle: true, dirName: 'policy-root', label: 'PolicyOS', policy: { scope: 'global', access: 'readonly' } }))
+await new Promise(resolve => setTimeout(resolve, 100))
+
+check('roster carries policy summary', (() => {
+  const rosters = holderFrames.filter(f => f.type === 'roster')
+  const last = rosters.at(-1)
+  return last !== undefined
+    && last.executors.length === 1
+    && last.executors[0].scope === 'global'
+    && last.executors[0].access === 'readonly'
+})())
+
+await tools.get('local_file_write').execute({ path: 'b.txt', content: 'abc' }, exec).then(
+  () => check('readonly blocks write', false),
+  (e) => check('readonly blocks write', e.message.includes('只读') && e.message.includes('权限')),
+)
+const readonlyList = await tools.get('local_file_list').execute({}, exec)
+check('readonly allows read', readonlyList.entries?.[0]?.path === 'a.txt' && readonlyList.device === 'PolicyOS')
+check('write frame not dispatched in readonly', !holderFrames.some(f => f.type === 'call' && f.op === 'write'))
+check('call frame carries caller policy', holderFrames.some(f => f.type === 'call' && f.policy?.access === 'readonly'))
+
+// 8. 白名单策略：仅列出的会话可读，其它会话/非会话调用者被拒
+holder.send(JSON.stringify({ type: 'state', hasHandle: true, dirName: 'policy-root', label: 'PolicyOS', policy: { scope: 'sessions', sessions: ['session-allowed'], access: 'readwrite' } }))
+await new Promise(resolve => setTimeout(resolve, 100))
+
+const allowedExec = { signal: new AbortController().signal, agent: { id: 'session-allowed' } }
+const otherExec = { signal: new AbortController().signal, agent: { id: 'session-other-long-id-1234' } }
+await tools.get('local_file_list').execute({}, exec).then(
+  () => check('allowlist blocks non-session caller', false),
+  (e) => check('allowlist blocks non-session caller', e.message.includes('不来自任何会话')),
+)
+await tools.get('local_file_list').execute({}, otherExec).then(
+  () => check('allowlist blocks other session', false),
+  (e) => check('allowlist blocks other session', e.message.includes('不在共享范围') && e.message.includes('session-other')),
+)
+const allowedList = await tools.get('local_file_list').execute({}, allowedExec)
+check('allowlist admits listed session', allowedList.entries?.[0]?.path === 'a.txt')
+
+// 9. 旧客户端兼容：state 不带 policy → 默认全局 + 读写（等于 1.0.0 行为）
+holder.send(JSON.stringify({ type: 'state', hasHandle: true, dirName: 'policy-root', label: 'PolicyOS' }))
+await new Promise(resolve => setTimeout(resolve, 100))
+const legacyList = await tools.get('local_file_list').execute({}, exec)
+check('legacy client (no policy) defaults to global readwrite', legacyList.entries?.[0]?.path === 'a.txt')
+const legacyWrite = await tools.get('local_file_write').execute({ path: 'c.txt', content: 'xy' }, exec)
+check('legacy client can still write', legacyWrite.bytes === 3)
+holder.close()
+await new Promise(resolve => setTimeout(resolve, 100))
+
 // 7. 兼容模式降级路径（headless）：esbuild 现场编译 files-backend/device/preview/
 // compat-picker，用 Node 的全局 File 模拟 input 选中的文件列表（showDirectoryPicker
 // 缺失的分支在浏览器侧由 pickerAvailable 特性检测驱动，这里覆盖后端行为本身、

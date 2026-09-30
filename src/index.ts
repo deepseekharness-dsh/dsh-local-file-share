@@ -22,10 +22,13 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock, ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import {
   DEFAULT_WS_PATH,
+  DEFAULT_SHARE_POLICY,
+  decidePolicy,
   highlightModulePath,
   parseBrowserFrame,
   type CallFrame,
   type FsOp,
+  type SharePolicy,
 } from './wire.js'
 
 /** cordis 函数插件名。 */
@@ -73,6 +76,8 @@ interface Conn {
   dirName: string | null
   /** 设备标签（state 帧携带；空串表示对端尚未上报）。 */
   label: string
+  /** 该标签页上报的共享策略（缺省 = 全局 + 读写）。 */
+  policy: SharePolicy
 }
 
 /** 一次等待浏览器回包的调用。 */
@@ -152,24 +157,16 @@ class BrowserRelay {
   }
 
   /**
-   * 挑选一个持有授权句柄的标签页，发起一次调用并等待结果。
+   * 挑选一个「持柄 ∧ 策略放行」的标签页，发起一次调用并等待结果。
    * @param op - 文件操作。
    * @param args - 操作参数。
    * @param signal - 调用方（工具 registry）的取消信号。
+   * @param sessionId - 调用方会话 id（`exec.agent?.id`；非会话调用者为 undefined）。
    * @returns 浏览器端回传的 JSON 值 + 执行者设备标签。
    */
-  call(op: FsOp, args: Record<string, unknown>, signal: AbortSignal): Promise<CallOutcome> {
-    const conn = this.pickExecutor()
-    if (conn === undefined) {
-      if (this.conns.size === 0) {
-        return Promise.reject(new Error(
-          'local-file-share: dsh 页面未在任何设备打开（这些工具操作的是浏览器所在机器的本地文件，需要一个在线标签页）',
-        ))
-      }
-      return Promise.reject(new Error(
-        'local-file-share: 没有设备持有授权目录（请在 dsh 页面的 local-file-share 卡片里授权）',
-      ))
-    }
+  call(op: FsOp, args: Record<string, unknown>, signal: AbortSignal, sessionId?: string): Promise<CallOutcome> {
+    const conn = this.pickExecutor(op, sessionId)
+    if (conn === undefined) return Promise.reject(this.noExecutorError(op, sessionId))
     const device = conn.label === '' ? '未命名设备' : conn.label
     const rpcId = randomUUID()
     return new Promise((resolve, reject) => {
@@ -193,7 +190,14 @@ class BrowserRelay {
       }
       signal.addEventListener('abort', onAbort, { once: true })
       try {
-        this.send(conn, { type: 'call', rpcId, op, args })
+        this.send(conn, {
+          type: 'call',
+          rpcId,
+          op,
+          args,
+          ...(sessionId !== undefined ? { caller: sessionId } : {}),
+          policy: { access: conn.policy.access },
+        })
       } catch (error) {
         if (this.settle(rpcId) !== undefined) reject(error instanceof Error ? error : new Error(String(error)))
       }
@@ -226,7 +230,7 @@ class BrowserRelay {
   }
 
   private accept(ws: WebSocket): void {
-    const conn: Conn = { id: randomUUID(), ws, hasHandle: false, dirName: null, label: '' }
+    const conn: Conn = { id: randomUUID(), ws, hasHandle: false, dirName: null, label: '', policy: DEFAULT_SHARE_POLICY }
     this.conns.add(conn)
     // 新连接立刻补一份当前 roster，不必等别人变更。
     this.sendRoster(conn)
@@ -237,6 +241,7 @@ class BrowserRelay {
         conn.hasHandle = frame.hasHandle
         conn.dirName = frame.dirName
         conn.label = frame.label
+        conn.policy = frame.policy
         this.broadcastRoster()
         return
       }
@@ -260,11 +265,16 @@ class BrowserRelay {
     ws.once('error', drop)
   }
 
-  /** 组装当前执行者名单（仅 hasHandle=true 的连接进 executors）。 */
+  /** 组装当前执行者名单（仅 hasHandle=true 的连接进 executors，附带各自策略摘要）。 */
   private rosterFrame(): string {
     const executors = [...this.conns]
       .filter(conn => conn.hasHandle)
-      .map(conn => ({ label: conn.label === '' ? '未命名设备' : conn.label, dirName: conn.dirName }))
+      .map(conn => ({
+        label: conn.label === '' ? '未命名设备' : conn.label,
+        dirName: conn.dirName,
+        scope: conn.policy.scope,
+        access: conn.policy.access,
+      }))
     return JSON.stringify({ type: 'roster', executors })
   }
 
@@ -282,14 +292,58 @@ class BrowserRelay {
   }
 
   /**
-   * Set 迭代序即插入序：取第一个声明 hasHandle 的连接 —— 多台设备同时
-   * 持柄在线时执行者确定（先接入者先得），不会逐次调用漂移。
+   * 在「持柄 ∧ 策略允许本次调用」的连接里取最先接入的一台 —— 多台设备同时
+   * 持柄在线时执行者确定（先接入者先得），不会逐次调用漂移；被策略挡住的
+   * 连接不入候选，因此不会出现「轮询到不该执行它的设备」。
+   * @param op - 本次操作。
+   * @param sessionId - 调用方会话 id（非会话调用者为 undefined）。
    */
-  private pickExecutor(): Conn | undefined {
+  private pickExecutor(op: FsOp, sessionId: string | undefined): Conn | undefined {
     for (const conn of this.conns) {
-      if (conn.hasHandle) return conn
+      if (!conn.hasHandle) continue
+      if (decidePolicy(conn.policy, sessionId, op).allowed) return conn
     }
     return undefined
+  }
+
+  /**
+   * 没有候选执行者时构造可操作的错误：区分「页面没开」「没人授权」「被策略挡」，
+   * 并给出该去哪改（模型据此不会盲目重试）。
+   */
+  private noExecutorError(op: FsOp, sessionId: string | undefined): Error {
+    if (this.conns.size === 0) {
+      return new Error(
+        'local-file-share: dsh 页面未在任何设备打开（这些工具操作的是浏览器所在机器的本地文件，需要一个在线标签页）',
+      )
+    }
+    const holders = [...this.conns].filter(conn => conn.hasHandle)
+    if (holders.length === 0) {
+      return new Error(
+        'local-file-share: 没有设备持有授权目录（请在 dsh 页面的「本地文件共享」卡片里授权）',
+      )
+    }
+    const label = (conn: Conn): string => (conn.label === '' ? '未命名设备' : conn.label)
+    const who = holders.map(conn => `${label(conn)}（${conn.dirName ?? '未命名目录'}）`).join('、')
+    const shortId = sessionId === undefined || sessionId === ''
+      ? '（非会话调用）'
+      : (sessionId.length > 18 ? `${sessionId.slice(0, 15)}…` : sessionId)
+    const denials = holders.map(conn => decidePolicy(conn.policy, sessionId, op).denial)
+    if (op === 'write' && denials.includes('readonly')) {
+      return new Error(
+        'local-file-share: 当前授权为「只读」，已拒绝写入'
+        + `（设备：${who}）—— 在「本地文件共享」卡片的「权限」里切换为「读写」后重试`,
+      )
+    }
+    if (denials.includes('out-of-scope')) {
+      return new Error(
+        `local-file-share: 当前授权限定「指定会话」，本会话 ${shortId} 不在共享范围内`
+        + `（设备：${who}）—— 在卡片的「共享范围」里加入本会话，或改为「全局」共享`,
+      )
+    }
+    return new Error(
+      'local-file-share: 当前授权限定「指定会话」，而本次调用不来自任何会话'
+      + `（设备：${who}）—— 请改为「全局」共享，或从会话内发起调用`,
+    )
   }
 
   private send(conn: Conn, frame: CallFrame | { type: 'cancel'; rpcId: string }): void {
@@ -350,6 +404,27 @@ interface WriteValue {
 
 const NOT_HOST_FS = ' This operates on the local disk of the machine running the browser '
   + '(authorized via File System Access API), NOT on this host\'s filesystem.'
+
+/** 三个工具描述共用的策略提示：告诉模型"可能被共享范围/只读策略拒绝"，减少无效重试。 */
+const POLICY_HINT = ' The user may scope this authorization to specific sessions and/or to read-only;'
+  + ' a call outside that policy is refused with an error explaining how to change it.'
+
+/**
+ * 取调用方会话 id。`dsh-tools` 的 `agent` 类型面在 0.1.0-rc.6 → 0.1.7-rc.2 之间变过
+ * （新版 `Agent` 是 `{ id: SessionId }`，旧声明把 `agent` 描述成另一副沙箱面），而本插件
+ * 对 peer 的允许范围同时覆盖两者 —— 所以按**运行时值**读取并兼容两种形状，只接受非空
+ * 字符串；拿不到即"非会话调用者"（在策略判定里是单独一档）。
+ * @param agent - `exec.agent` 的原始值。
+ * @returns 会话 id，或 undefined。
+ */
+function callerSessionId(agent: unknown): string | undefined {
+  if (typeof agent !== 'object' || agent === null) return undefined
+  const record = agent as { id?: unknown; session?: { id?: unknown } | null }
+  if (typeof record.id === 'string' && record.id !== '') return record.id
+  const nested = record.session
+  if (typeof nested === 'object' && nested !== null && typeof nested.id === 'string' && nested.id !== '') return nested.id
+  return undefined
+}
 
 function text(text: string): ContentBlock[] {
   return [{ type: 'text', text }]
@@ -433,6 +508,7 @@ export function apply(ctx: HostContext, config?: Config): void {
     name: 'local_file_list',
     description: 'List files and directories inside the local directory the user authorized in the dsh web page.'
       + NOT_HOST_FS
+      + POLICY_HINT
       + ' `path` is relative to the authorized root (omit for the root itself).'
       + ' Set `recursive` to true to walk subdirectories.'
       + ' Requires a connected browser tab holding an authorized directory; fails fast otherwise.',
@@ -476,7 +552,7 @@ export function apply(ctx: HostContext, config?: Config): void {
       const outcome = await relay.call('list', {
         ...(args.path !== undefined ? { path: args.path } : {}),
         ...(args.recursive !== undefined ? { recursive: args.recursive } : {}),
-      }, exec.signal)
+      }, exec.signal, callerSessionId(exec.agent))
       return { ...(outcome.value as Omit<ListValue, 'device'>), device: outcome.device }
     },
   })), 'local-file-share: local_file_list')
@@ -485,6 +561,7 @@ export function apply(ctx: HostContext, config?: Config): void {
     name: 'local_file_read',
     description: 'Read a UTF-8 text file from the local directory the user authorized in the dsh web page.'
       + NOT_HOST_FS
+      + POLICY_HINT
       + ' `path` is relative to the authorized root.'
       + ' Content beyond `maxBytes` (default 262144) is truncated and marked as such.',
     parameters: {
@@ -512,7 +589,7 @@ export function apply(ctx: HostContext, config?: Config): void {
       const outcome = await relay.call('read', {
         path: args.path,
         ...(args.maxBytes !== undefined ? { maxBytes: args.maxBytes } : {}),
-      }, exec.signal)
+      }, exec.signal, callerSessionId(exec.agent))
       return { ...(outcome.value as Omit<ReadValue, 'device'>), device: outcome.device }
     },
   })), 'local-file-share: local_file_read')
@@ -521,6 +598,7 @@ export function apply(ctx: HostContext, config?: Config): void {
     name: 'local_file_write',
     description: 'Write a UTF-8 text file into the local directory the user authorized in the dsh web page.'
       + NOT_HOST_FS
+      + POLICY_HINT
       + ' `path` is relative to the authorized root; parent directories are created automatically.'
       + ' Existing files are overwritten. Returns the number of bytes written.',
     parameters: {
@@ -540,7 +618,7 @@ export function apply(ctx: HostContext, config?: Config): void {
       render: (_args, value) => text(`已写入 ${String(value.bytes)} 字节到 ${value.path}（设备：${value.device}）`),
     },
     async execute(args, exec: ToolRunContext) {
-      const outcome = await relay.call('write', { path: args.path, content: args.content }, exec.signal)
+      const outcome = await relay.call('write', { path: args.path, content: args.content }, exec.signal, callerSessionId(exec.agent))
       return { ...(outcome.value as Omit<WriteValue, 'device'>), device: outcome.device }
     },
   })), 'local-file-share: local_file_write')

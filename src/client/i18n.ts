@@ -70,6 +70,28 @@ export interface Strings {
   compatFlag: string
   compatHttps: string
   iframeAuthLink: string
+  // ---- 共享范围与权限 ----
+  scopeLabel: string
+  scopeGlobal: string
+  scopeSessions: string
+  accessLabel: string
+  accessReadwrite: string
+  accessReadonly: string
+  sessionPickHint: string
+  sessionSelectAll: string
+  sessionClearAll: string
+  sessionEmpty: string
+  sessionNoneWarn: string
+  readonlyHint: string
+  runningTag: string
+  subagentTag: string
+  policyGlobal: string
+  policySessions(n: number): string
+  chipIncluded: string
+  chipExcluded: string
+  chipToggleTip: string
+  chipAdd: string
+  chipRemove: string
   // ---- 目录树 ----
   treeSection: string
   searchPlaceholder: string
@@ -135,6 +157,28 @@ const zh: Strings = {
   compatFlag: '② Chrome：chrome://flags/#unsafely-treat-insecure-origin-as-secure',
   compatHttps: '③ 改用 HTTPS 访问',
   iframeAuthLink: '↗ 在独立标签页打开本页完成授权',
+  // ---- 共享范围与权限 ----
+  scopeLabel: '共享范围',
+  scopeGlobal: '全局',
+  scopeSessions: '指定会话',
+  accessLabel: '权限',
+  accessReadwrite: '读写',
+  accessReadonly: '只读',
+  sessionPickHint: '勾选可以访问该目录的会话',
+  sessionSelectAll: '全选',
+  sessionClearAll: '清空',
+  sessionEmpty: '还没有会话列表（本页未连接任何会话）',
+  sessionNoneWarn: '未勾选任何会话：当前没有任何会话能访问该目录',
+  readonlyHint: '只读：agent 只能列目录与读文件，写入会被拒绝',
+  runningTag: '运行中',
+  subagentTag: '子代理',
+  policyGlobal: '全局',
+  policySessions: n => `${String(n)} 个会话`,
+  chipIncluded: '本会话已加入共享范围',
+  chipExcluded: '本会话不在共享范围',
+  chipToggleTip: '点击加入/移出本会话',
+  chipAdd: '加入本会话',
+  chipRemove: '移出本会话',
   treeSection: '目录内容',
   searchPlaceholder: '搜索目录…',
   searchEmpty: '没有匹配项',
@@ -197,6 +241,28 @@ const en: Strings = {
   compatFlag: '② Chrome: chrome://flags/#unsafely-treat-insecure-origin-as-secure',
   compatHttps: '③ Switch to HTTPS',
   iframeAuthLink: '↗ Open this page in a standalone tab to authorize',
+  // ---- Share scope and access ----
+  scopeLabel: 'Share scope',
+  scopeGlobal: 'Global',
+  scopeSessions: 'Selected sessions',
+  accessLabel: 'Access',
+  accessReadwrite: 'Read/write',
+  accessReadonly: 'Read-only',
+  sessionPickHint: 'Tick the sessions allowed to use this directory',
+  sessionSelectAll: 'Select all',
+  sessionClearAll: 'Clear',
+  sessionEmpty: 'No session list yet (this page is not attached to any session)',
+  sessionNoneWarn: 'No session ticked: nothing can reach this directory right now',
+  readonlyHint: 'Read-only: the agent may list and read, writes are refused',
+  runningTag: 'running',
+  subagentTag: 'subagent',
+  policyGlobal: 'global',
+  policySessions: n => `${String(n)} sessions`,
+  chipIncluded: 'This session is in the share scope',
+  chipExcluded: 'This session is outside the share scope',
+  chipToggleTip: 'Click to add/remove this session',
+  chipAdd: 'Add this session',
+  chipRemove: 'Remove this session',
   treeSection: 'Contents',
   searchPlaceholder: 'Search directory…',
   searchEmpty: 'No matches',
