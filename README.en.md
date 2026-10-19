@@ -147,6 +147,19 @@ Key points:
   the chip can. It stays hidden in global mode.
 - Upgrading to 1.1.0 needs **no re-authorization**.
 
+## Version compatibility
+
+- Supports **DSH ≥ 0.1.0-rc.6** (no upper peer bound); verified on `0.1.7-rc.2` and `0.2.0-rc.2`.
+- After upgrading DSH, one command tells you whether the source still matches the running API surface:
+
+  ```sh
+  npm install && npm run check:harness    # tsc against the locally installed DSH types (no dependency changes)
+  ```
+
+- The client half depends hard on `@deepseek-ai/dsh-client-ui-slots` only; optional surfaces (the in-session
+  chip, the session list) degrade silently instead of breaking the card.
+- Details (dependency surface, drift points, upgrade steps): [docs/compatibility.md](https://github.com/deepseekharness-dsh/dsh-local-file-share/blob/main/docs/compatibility.md).
+
 ## Security model
 
 - **Scope**: only the directory you selected (and its subtree) is reachable; paths outside it are not.

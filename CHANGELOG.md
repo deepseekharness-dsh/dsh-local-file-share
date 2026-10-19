@@ -3,6 +3,29 @@
 本文件记录 `dsh-local-file-share`（本地文件共享）的全部变更。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.1.1] — 2026-10-19
+
+### Changed（面向后续版本的兼容性）
+
+- **peer 范围放宽**：`@deepseek-ai/dsh-tools` 由 `^0.1.0-rc.6` 改为 `>=0.1.0-rc.6`（无上界），
+  0.2.x / 0.3.x / 1.x 不再被挡在门外。已在 **DSH 0.2.0-rc.2** 上验证类型面与运行时契约。
+- **去掉一个硬客户端依赖**：`dsh.client.inject` 只保留 `@deepseek-ai/dsh-client-ui-slots`，
+  会话小条改走运行时动态等待 `conversation.input.dock`；上游若重命名该包不会导致整块客户端模块不加载。
+- **可选能力静默降级**：会话小条的槽位注册包 `try/catch`（失败只 warn，卡片不受影响）；
+  与既有的 `useSessions` 缺失、`connection` 缺失降级保持一致。
+
+### Added
+
+- **兼容门禁** `npm run check:harness`（`scripts/harness-types.mjs`）：用本机安装的 DSH 自带类型面
+  跑一次 `tsc`，不改 node_modules、不改依赖，跑完即删临时 tsconfig；找不到安装时跳过。
+  已并入 `npm run verify`。
+- **`docs/compatibility.md`**：支持范围、实际依赖的上游 API 面、漂移点与防御、升级 DSH 后的标准动作。
+
+### Verified
+
+- DSH `0.2.0-rc.2`：`check:harness` 通过；`shell.overlay` 与 `useSessions` 标准 props、`connection.requestRejection`、
+  `window.__ModuleLoader__` 契约均仍在。
+
 ## [1.1.0] — 2026-09-30
 
 ### Added

@@ -554,13 +554,19 @@ export function apply(ctx: ClientCtx): void {
   // 只在「指定会话」模式下渲染，默认全局模式完全不可见。
   ctx.effect(() => {
     let dispose: (() => void) | undefined
-    ctx.slots.inject('conversation.input.dock', () => {
-      dispose = ctx.slots.register(
-        { name: 'conversation.input.dock', id: 'local-file-share-session', order: 40 },
-        sessionChip,
-      )
-      return dispose
-    })
+    // 可选能力：会话小条依赖 conversation.input.dock 槽位。未来版本若移除/重命名该槽位，
+    // 这里必须**静默降级**（卡片本身仍可用），所以整段包 try/catch 并只 warn 一次。
+    try {
+      ctx.slots.inject('conversation.input.dock', () => {
+        dispose = ctx.slots.register(
+          { name: 'conversation.input.dock', id: 'local-file-share-session', order: 40 },
+          sessionChip,
+        )
+        return dispose
+      })
+    } catch (error) {
+      console.warn('[local-file-share] 会话小条不可用（槽位缺失），已降级：', error)
+    }
     return () => { dispose?.() }
   }, 'local-file-share: session scope chip')
 }

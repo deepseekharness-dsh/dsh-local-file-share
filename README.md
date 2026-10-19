@@ -133,6 +133,19 @@ dsh plugin --profile web add file:/abs/path/to/dsh-local-file-share
   移出本会话」—— 根卡片不知道"当前会话是谁"，小条知道，两者互补；全局模式下小条不出现。
 - 升级到 1.1.0 **无需重新授权**。
 
+## 版本兼容
+
+- 支持 **DSH ≥ 0.1.0-rc.6**（peer 无上界），已在 `0.1.7-rc.2` 与 `0.2.0-rc.2` 实测；
+- 升级 DSH 后跑一条命令即可知道源码是否还跟得上：
+
+  ```sh
+  npm install && npm run check:harness    # 用本机 DSH 自带类型面跑 tsc（不改依赖）
+  ```
+
+- 客户端只硬依赖 `@deepseek-ai/dsh-client-ui-slots`；会话小条、会话列表等可选能力缺失时**静默降级**，
+  不会托垮卡片。
+- 细节（依赖面、漂移点、升级流程）见 [docs/compatibility.md](https://github.com/deepseekharness-dsh/dsh-local-file-share/blob/main/docs/compatibility.md)。
+
 ## 安全模型
 
 - **授权范围**：只有你主动选中的那一个目录（及其子树）可见，插件拿不到目录之外的路径；

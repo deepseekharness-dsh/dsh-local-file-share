@@ -25,6 +25,7 @@ npm install
 npm run build       # node build.mjs → lib/
 npm run typecheck   # tsc --noEmit
 npm run smoke       # scripts/smoke.mjs
+npm run check:harness # 用本机 DSH 自带类型面跑 tsc（升级 DSH 后必跑）
 ```
 
 **`lib/` 构建产物是入库的**（安装零脚本，`dsh plugin add github:...` 直接可用）——
